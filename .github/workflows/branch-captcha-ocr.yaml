@@ -79,8 +79,11 @@ jobs:
 
   flutter-build-android:
     needs: [flutter-test, flutter-analyze]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_android || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
     runs-on: "ubuntu-latest"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -124,8 +127,11 @@ jobs:
 
   flutter-build-linux-amd64:
     needs: [flutter-test, flutter-analyze]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_linux || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
     runs-on: "ubuntu-latest"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -174,8 +180,11 @@ jobs:
 
   flutter-build-windows:
     needs: [flutter-test, flutter-analyze]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_windows || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
     runs-on: "windows-latest"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -209,8 +218,11 @@ jobs:
 
   flutter-build-ios:
     needs: [flutter-test, flutter-analyze]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_ios || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
     runs-on: "macos-latest"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
@@ -241,8 +253,11 @@ jobs:
 
   flutter-build-macos:
     needs: [flutter-test, flutter-analyze]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_macos || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
     runs-on: "macos-latest"
-    permissions: write-all
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Clone repository
         uses: actions/checkout@v4

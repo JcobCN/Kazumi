@@ -22,7 +22,7 @@ class CaptchaOcrService {
       );
 
       final tempDir = await getTemporaryDirectory();
-      tempFile = File('${tempDir.path}/captcha_ocr.png');
+      tempFile = File('${tempDir.path}/captcha_ocr_${DateTime.now().microsecondsSinceEpoch}.png');
       await tempFile.writeAsBytes(Uint8List.fromList(imageBytes));
 
       final inputImage = InputImage.fromFile(tempFile);
