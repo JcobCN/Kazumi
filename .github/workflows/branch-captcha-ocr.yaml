@@ -1,0 +1,257 @@
+name: "Branch build (feat/captcha-ocr)"
+
+on:
+  push:
+    branches:
+      - "feat/captcha-ocr"
+  workflow_dispatch:
+    inputs:
+      run_android:
+        description: 'run android build'
+        required: false
+        default: true
+        type: boolean
+      run_windows:
+        description: 'run windows build'
+        required: false
+        default: false
+        type: boolean
+      run_ios:
+        description: 'run ios build'
+        required: false
+        default: false
+        type: boolean
+      run_macos:
+        description: 'run macos build'
+        required: false
+        default: false
+        type: boolean
+      run_linux:
+        description: 'run linux build'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  DANDANAPI_APPID: ${{ secrets.DANDANAPI_APPID }}
+  DANDANAPI_KEY: ${{ secrets.DANDANAPI_KEY }}
+  KAZUMI_APPID: ${{ secrets.KAZUMI_APPID }}
+  KAZUMI_KEY: ${{ secrets.KAZUMI_KEY }}
+
+jobs:
+  flutter-test:
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+        shell: bash
+      - name: Run Flutter tests
+        run: flutter test
+        shell: bash
+
+  flutter-analyze:
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+        shell: bash
+      - name: Analyze Flutter project
+        run: flutter analyze --no-fatal-infos --fatal-warnings
+        shell: bash
+
+  flutter-build-android:
+    needs: [flutter-test, flutter-analyze]
+    runs-on: "ubuntu-latest"
+    permissions: write-all
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libgtk-3-dev ninja-build libayatana-appindicator3-dev libasound2-dev
+        shell: bash
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        id: flutter-action
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+        shell: bash
+      - name: Remove build id
+        run: sed -i -e 's/-Wl,/-Wl,--build-id=none,/' ${{ steps.flutter-action.outputs.PUB-CACHE-PATH }}/hosted/pub.dev/jni-*/src/CMakeLists.txt
+      - name: Build Flutter for Android
+        run: >-
+          flutter build apk --split-per-abi
+          --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
+          --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
+          --dart-define=KAZUMI_APPID=$KAZUMI_APPID
+          --dart-define=KAZUMI_KEY=$KAZUMI_KEY
+        shell: bash
+      - name: Package android build output
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Kazumi_android_captcha_ocr.apk
+        shell: bash
+      - name: Upload android outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android_outputs
+          path: Kazumi_android_*.apk
+
+  flutter-build-linux-amd64:
+    needs: [flutter-test, flutter-analyze]
+    runs-on: "ubuntu-latest"
+    permissions: write-all
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libgtk-3-dev ninja-build libayatana-appindicator3-dev unzip webkit2gtk-4.1 libasound2-dev
+        shell: bash
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+        shell: bash
+      - name: Build Flutter for Linux
+        run: >-
+          flutter build linux
+          --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
+          --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
+          --dart-define=KAZUMI_APPID=$KAZUMI_APPID
+          --dart-define=KAZUMI_KEY=$KAZUMI_KEY
+        shell: bash
+      - name: Package linux amd64 build output
+        run: tar -zcvf Kazumi_linux_captcha_ocr_amd64.tar.gz -C build/linux/x64/release/bundle .
+        shell: bash
+      - name: Upload linux amd64 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux_amd64_outputs
+          path: Kazumi_linux_*.tar.gz
+
+  flutter-build-windows:
+    needs: [flutter-test, flutter-analyze]
+    runs-on: "windows-latest"
+    permissions: write-all
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '18'
+      - name: Get Flutter dependencies
+        run: flutter pub get
+      - name: Build Flutter for Windows
+        run: >-
+          flutter build windows
+          --dart-define=DANDANAPI_APPID=$env:DANDANAPI_APPID
+          --dart-define=DANDANAPI_KEY=$env:DANDANAPI_KEY
+          --dart-define=KAZUMI_APPID=$env:KAZUMI_APPID
+          --dart-define=KAZUMI_KEY=$env:KAZUMI_KEY
+      - name: Package windows build output
+        run: Compress-Archive build/windows/x64/runner/Release/* Kazumi_windows_captcha_ocr.zip
+      - name: Upload windows outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows_outputs
+          path: Kazumi_windows_*.zip
+
+  flutter-build-ios:
+    needs: [flutter-test, flutter-analyze]
+    runs-on: "macos-latest"
+    permissions: write-all
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+      - name: Build IPA
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
+          --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
+          --dart-define=KAZUMI_APPID=$KAZUMI_APPID
+          --dart-define=KAZUMI_KEY=$KAZUMI_KEY
+      - name: Create IPA
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+          zip -q -r Kazumi_ios_captcha_ocr_no_sign.ipa Payload
+      - name: Upload iOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios_outputs
+          path: Kazumi_ios_*.ipa
+
+  flutter-build-macos:
+    needs: [flutter-test, flutter-analyze]
+    runs-on: "macos-latest"
+    permissions: write-all
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+      - name: Get Flutter dependencies
+        run: flutter pub get
+      - name: Build Flutter for macOS
+        run: >-
+          flutter build macos --release
+          --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
+          --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
+          --dart-define=KAZUMI_APPID=$KAZUMI_APPID
+          --dart-define=KAZUMI_KEY=$KAZUMI_KEY
+      - name: Package macOS build output
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Kazumi.app Kazumi_macos_captcha_ocr.zip
+        shell: bash
+      - name: Upload macOS outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos_outputs
+          path: Kazumi_macos_*.zip

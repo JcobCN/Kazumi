@@ -20,6 +20,7 @@ import 'dart:convert';
 import 'package:kazumi/services/plugin/captcha_verification_service.dart';
 import 'package:kazumi/plugins/anti_crawler_config.dart';
 import 'package:kazumi/utils/device.dart';
+import 'package:kazumi/services/ocr/captcha_ocr_service.dart';
 
 class SourceSheet extends StatefulWidget {
   const SourceSheet({
@@ -670,8 +671,9 @@ class _CaptchaDialogState extends State<_CaptchaDialog> {
   final ValueNotifier<String?> _captchaImageNotifier =
       ValueNotifier<String?>(null);
   final ValueNotifier<bool> _submittingNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _recognizingNotifier = ValueNotifier<bool>(false);
+  final TextEditingController _captchaController = TextEditingController();
   late final StreamSubscription<String?> _imageSub;
-  String _captchaCode = '';
 
   @override
   void initState() {
@@ -679,7 +681,23 @@ class _CaptchaDialogState extends State<_CaptchaDialog> {
     _imageSub = widget.captchaImageStream.listen((url) {
       if (!mounted || url == null) return;
       _captchaImageNotifier.value = url;
+      _captchaController.clear();
+      _runOcr(url);
     });
+  }
+
+  Future<void> _runOcr(String imageUrl) async {
+    if (!CaptchaOcrService.isSupported) return;
+    _recognizingNotifier.value = true;
+    final result = await CaptchaOcrService.recognizeCaptcha(imageUrl);
+    if (!mounted) return;
+    _recognizingNotifier.value = false;
+    if (result != null && result.isNotEmpty) {
+      _captchaController.text = result;
+      KazumiDialog.showToast(message: '已自动识别验证码');
+    } else {
+      KazumiDialog.showToast(message: '自动识别失败，请手动输入');
+    }
   }
 
   @override
@@ -687,12 +705,14 @@ class _CaptchaDialogState extends State<_CaptchaDialog> {
     _imageSub.cancel();
     _captchaImageNotifier.dispose();
     _submittingNotifier.dispose();
+    _recognizingNotifier.dispose();
+    _captchaController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (_submittingNotifier.value) return;
-    final captchaCode = _captchaCode.trim();
+    final captchaCode = _captchaController.text.trim();
     if (captchaCode.isEmpty) {
       KazumiDialog.showToast(message: '请输入验证码');
       return;
@@ -752,12 +772,39 @@ class _CaptchaDialogState extends State<_CaptchaDialog> {
                           ),
                           const SizedBox(height: 16),
                           TextField(
+                            controller: _captchaController,
                             autofocus: true,
                             enabled: !isSubmitting,
-                            onChanged: (value) => _captchaCode = value,
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               labelText: '请输入验证码',
-                              border: OutlineInputBorder(),
+                              border: const OutlineInputBorder(),
+                              suffixIcon: CaptchaOcrService.isSupported
+                                  ? ValueListenableBuilder<bool>(
+                                      valueListenable: _recognizingNotifier,
+                                      builder: (context, isRecognizing, _) {
+                                        return isRecognizing
+                                            ? const Padding(
+                                                padding: EdgeInsets.all(12),
+                                                child: SizedBox(
+                                                  width: 18,
+                                                  height: 18,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                ),
+                                              )
+                                            : IconButton(
+                                                icon: const Icon(
+                                                    Icons.auto_fix_high),
+                                                tooltip: '自动识别',
+                                                onPressed: isSubmitting
+                                                    ? null
+                                                    : () => _runOcr(imageUrl),
+                                              );
+                                      },
+                                    )
+                                  : null,
                             ),
                             onSubmitted: isSubmitting ? null : (_) => _submit(),
                           ),

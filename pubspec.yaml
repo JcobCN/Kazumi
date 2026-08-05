@@ -109,6 +109,7 @@ dependencies:
   win32: ^5.15.0
   ffi: ^2.1.0
   image_picker: ^1.2.1
+  google_mlkit_text_recognition: ^0.16.0
   webview_windows:
     git:
       url: https://github.com/Predidit/flutter-webview-windows.git
