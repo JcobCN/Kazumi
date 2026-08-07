@@ -109,7 +109,7 @@ dependencies:
   win32: ^5.15.0
   ffi: ^2.1.0
   image_picker: ^1.2.1
-  google_mlkit_text_recognition: ^0.16.0
+  onnxruntime: ^1.4.1
   webview_windows:
     git:
       url: https://github.com/Predidit/flutter-webview-windows.git
@@ -241,6 +241,7 @@ flutter:
     - assets/shaders/
     - assets/images/logo/
     - assets/statements/
+    - assets/ocr/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware
