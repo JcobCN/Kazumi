@@ -23,7 +23,6 @@ class CaptchaOcrService {
   // rec: PP-OCRv6 tiny rec (SVTR + CTC). Input NCHW float [N,3,48,W],
   // normalized to [-1,1] as (x/255 - 0.5)/0.5, padded to a multiple of 16.
   static const int _recHeight = 48;
-  static const int _recMaxWidth = 320;
 
   static bool get isSupported => true;
 
@@ -134,8 +133,12 @@ class CaptchaOcrService {
     final w = img.width;
     final h = img.height;
     final scale = _detLimitSideLen / math.max(w, h);
-    final resizeW = (w * scale).round();
-    final resizeH = (h * scale).round();
+    var resizeW = (w * scale).round();
+    var resizeH = (h * scale).round();
+    // DBNet needs both H and W to be multiples of 32; round up to the next
+    // multiple so the model's down/up-sampling tensors line up.
+    resizeW = ((resizeW + 31) ~/ 32) * 32;
+    resizeH = ((resizeH + 31) ~/ 32) * 32;
     final resized = image.copyResize(
       img,
       width: resizeW,
@@ -273,18 +276,12 @@ class CaptchaOcrService {
     final crop = _cropBox(img, box);
     if (crop == null) return '';
 
-    // resize_norm_img_chinese: keep aspect ratio, height fixed to 48, width
-    // limited to 320.
+    // resize_norm_img_chinese: keep aspect ratio, height fixed to 48. Width
+    // is 48*ratio (no truncation) so long lines stay undistorted.
     final h = crop.height;
     final w = crop.width;
     final ratio = w / h;
-    final maxRatio = _recMaxWidth / _recHeight;
-    int resizeW;
-    if (ratio >= maxRatio) {
-      resizeW = _recMaxWidth;
-    } else {
-      resizeW = (_recHeight * ratio).ceil();
-    }
+    final resizeW = (48 * ratio).ceil();
     final resized = image.copyResize(
       crop,
       width: resizeW,
