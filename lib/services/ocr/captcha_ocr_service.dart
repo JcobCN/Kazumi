@@ -31,10 +31,25 @@ class CaptchaOcrService {
   static OrtSession? _recSession;
   static List<String>? _dict;
   static Future<void>? _initFuture;
+  static Future<void> _inferenceLock = Future.value();
+
+  /// Serializes all det/rec inference. The onnxruntime plugin's runAsync
+  /// multiplexes every session through a single broadcast-stream isolate
+  /// without request/response pairing, so concurrent calls would consume the
+  /// same first result. A simple chained future keeps them strictly ordered.
+  static Future<T> _serialized<T>(Future<T> Function() action) {
+    final result = _inferenceLock.then((_) => action());
+    _inferenceLock = result.then((_) {}, onError: (_) {});
+    return result;
+  }
 
   static Future<void> _ensureInit() async {
-    _initFuture ??= _init();
-    return _initFuture;
+    try {
+      return _initFuture ??= _init();
+    } catch (_) {
+      _initFuture = null;
+      rethrow;
+    }
   }
 
   static Object? _firstOutputValue(List<OrtValue?>? outputs) {
@@ -61,7 +76,11 @@ class CaptchaOcrService {
 
   /// Recognize captcha text from a base64 data URL. Returns the decoded text
   /// (whitespace stripped) or null when nothing was recognized.
-  static Future<String?> recognizeCaptcha(String base64DataUrl) async {
+  static Future<String?> recognizeCaptcha(String base64DataUrl) {
+    return _serialized(() => _recognizeCaptcha(base64DataUrl));
+  }
+
+  static Future<String?> _recognizeCaptcha(String base64DataUrl) async {
     try {
       final base64Str = base64DataUrl.contains(',')
           ? base64DataUrl.split(',').last
@@ -104,8 +123,9 @@ class CaptchaOcrService {
     final inputOrt =
         OrtValueTensor.createTensorWithDataList(tensor, inputShape);
     final runOptions = OrtRunOptions();
+    List<OrtValue?>? outputs;
     try {
-      final outputs = await detSession.runAsync(runOptions, {'x': inputOrt});
+      outputs = await detSession.runAsync(runOptions, {'x': inputOrt});
       final det = _firstOutputValue(outputs);
       // reshape[1,1,H,W] => det[0][0] is HxW probability map.
       final probMap = det is List && det.isNotEmpty && det[0] is List
@@ -124,6 +144,9 @@ class CaptchaOcrService {
               ))
           .toList();
     } finally {
+      for (final o in outputs ?? const <OrtValue?>[]) {
+        o?.release();
+      }
       inputOrt.release();
       runOptions.release();
     }
@@ -306,13 +329,17 @@ class CaptchaOcrService {
     final inputOrt =
         OrtValueTensor.createTensorWithDataList(tensor, inputShape);
     final runOptions = OrtRunOptions();
+    List<OrtValue?>? outputs;
     try {
-      final outputs = await recSession.runAsync(runOptions, {'x': inputOrt});
+      outputs = await recSession.runAsync(runOptions, {'x': inputOrt});
       final rec = _firstOutputValue(outputs);
       // reshape[1, seq_len, classes] => rec[0] is List<List<double>>.
       if (rec is! List || rec.isEmpty || rec[0] is! List) return '';
       return _ctcDecode(rec[0], dict);
     } finally {
+      for (final o in outputs ?? const <OrtValue?>[]) {
+        o?.release();
+      }
       inputOrt.release();
       runOptions.release();
     }
