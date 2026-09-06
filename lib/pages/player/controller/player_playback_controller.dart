@@ -13,8 +13,11 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/network/system_proxy_service.dart';
 import 'package:kazumi/services/player/playback_cache_policy.dart';
+import 'package:kazumi/services/player/player_error_mapper.dart';
 import 'package:kazumi/services/player/player_screenshot_service.dart';
 import 'package:kazumi/services/storage/storage.dart';
+import 'package:kazumi/services/video_source/video_source_format.dart';
+import 'package:kazumi/utils/async_serial_queue.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:mobx/mobx.dart';
@@ -75,6 +78,9 @@ abstract class _PlayerPlaybackController with Store {
   _OwnedPlayer? _ownedPlayer;
   Player? get mediaPlayer => _ownedPlayer?.player;
   VideoController? videoController;
+
+  final AsyncSerialQueue _prefetchWrites = AsyncSerialQueue();
+  bool _prefetchSuspendWanted = false;
 
   bool hAenable = true;
   late String hardwareDecoder;
@@ -229,11 +235,46 @@ abstract class _PlayerPlaybackController with Store {
     }
   }
 
+  /// Android blocks network access for backgrounded apps; a prefetching
+  /// demuxer then burns through ffmpeg's reconnect/segment retries and marks
+  /// the stream EOF, leaving playback permanently stuck once foregrounded.
+  /// Suspending zeroes the readahead window so no new requests are issued
+  /// while buffered data stays available; restore values are mpv defaults,
+  /// which media_kit leaves untouched. Writes are serialized and apply the
+  /// latest requested state, so rapid lifecycle flips cannot reorder.
+  Future<void> setPrefetchSuspended(bool suspended) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    _prefetchSuspendWanted = suspended;
+    await _prefetchWrites.run(() async {
+      final wanted = _prefetchSuspendWanted;
+      final player = mediaPlayer;
+      if (player == null) {
+        return;
+      }
+      try {
+        final pp = player.platform as NativePlayer;
+        await pp.setProperty('cache-secs', wanted ? '0' : '36000');
+        if (!isCurrentPlayer(player)) {
+          return;
+        }
+        await pp.setProperty('demuxer-readahead-secs', wanted ? '0' : '1');
+      } catch (e) {
+        KazumiLogger().w(
+          'PlayerController: failed to ${wanted ? 'suspend' : 'resume'} demuxer prefetch',
+          error: e,
+        );
+      }
+    });
+  }
+
   Future<Player?> createVideoController(
     Map<String, String> httpHeaders,
     bool adBlockerEnabled, {
     required bool Function() canInstall,
     int offset = 0,
+    VideoSourceFormat videoSourceFormat = VideoSourceFormat.auto,
   }) async {
     startOffset = offset;
     superResolutionMode = SuperResolutionMode.fromStorageValue(
@@ -385,14 +426,15 @@ abstract class _PlayerPlaybackController with Store {
 
       bool showPlayerError = GStorage.getSetting(SettingsKeys.showPlayerError);
       player.stream.error.listen((event) {
-        if (showPlayerError) {
-          if (!isCurrentPlayer(player)) {
-            return;
-          }
-          if (event.toString().contains('Failed to open') && playerBuffering) {
+        if (isCurrentPlayer(player)) {
+          final actionableMessage = PlayerErrorMapper.toActionableMessage(
+            event,
+            isBuffering: playerBuffering,
+          );
+          if (actionableMessage != null) {
             KazumiDialog.showToast(
-                message: '加载失败, 请尝试更换其他视频来源', showActionButton: true);
-          } else {
+                message: actionableMessage, showActionButton: true);
+          } else if (showPlayerError) {
             KazumiDialog.showToast(
                 message: '播放器内部错误 ${event.toString()} ${videoUrl()}',
                 duration: const Duration(seconds: 5),
@@ -405,6 +447,13 @@ abstract class _PlayerPlaybackController with Store {
 
       if (superResolutionMode != SuperResolutionMode.off) {
         await setShader(superResolutionMode, player: player);
+        if (!isCurrentPlayer(player)) {
+          return await _discardIfNotCurrent(candidate);
+        }
+      }
+
+      if (videoSourceFormat == VideoSourceFormat.hls) {
+        await pp.setProperty('demuxer-lavf-format', 'hls');
         if (!isCurrentPlayer(player)) {
           return await _discardIfNotCurrent(candidate);
         }

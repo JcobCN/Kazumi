@@ -1,25 +1,27 @@
 import 'dart:io';
 import 'dart:ui';
-import 'package:kazumi/bean/dialog/adaptive_bottom_sheet.dart';
-import 'package:kazumi/bean/dialog/dialog_helper.dart';
-import 'package:kazumi/pages/info/rating_review_dialog.dart';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:flutter_modular/flutter_modular.dart';
-import 'package:kazumi/bean/widget/collect_button.dart';
-import 'package:kazumi/bean/widget/embedded_native_control_area.dart';
-import 'package:kazumi/services/storage/storage.dart';
-import 'package:kazumi/pages/info/info_controller.dart';
-import 'package:kazumi/bean/card/bangumi_info_card.dart';
-import 'package:kazumi/pages/info/source_sheet.dart';
-import 'package:kazumi/plugins/plugins_controller.dart';
-import 'package:kazumi/bean/card/network_img_layer.dart';
-import 'package:kazumi/services/logging/logger.dart';
-import 'package:kazumi/pages/info/info_tabview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:flutter_mobx/flutter_mobx.dart';
-import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+
 import 'package:kazumi/bean/appbar/drag_to_move_bar.dart' as dtb;
+import 'package:kazumi/bean/card/bangumi_info_card.dart';
+import 'package:kazumi/bean/card/network_img_layer.dart';
+import 'package:kazumi/bean/dialog/adaptive_bottom_sheet.dart';
+import 'package:kazumi/bean/dialog/dialog_helper.dart';
+import 'package:kazumi/bean/widget/collect_button.dart';
+import 'package:kazumi/bean/widget/embedded_native_control_area.dart';
+import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+import 'package:kazumi/pages/info/info_controller.dart';
+import 'package:kazumi/pages/info/info_tabview.dart';
+import 'package:kazumi/pages/info/rating_review_dialog.dart';
+import 'package:kazumi/pages/info/source_sheet.dart';
+import 'package:kazumi/plugins/plugins_controller.dart';
+import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/device.dart';
 
 class InfoPage extends StatefulWidget {
@@ -52,7 +54,6 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
 
   InfoController get infoController => widget.infoController;
   PluginsController get pluginsController => widget.pluginsController;
-  late TabController sourceTabController;
   late TabController infoTabController;
   late bool showRating;
 
@@ -216,8 +217,7 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     infoController.staffList.clear();
     infoController.clearRelations();
     infoController.pluginSearchResponseList.clear();
-    // Search results can miss rating distribution or summaries, so fill those
-    // fields without replacing image URLs that are already rendered.
+    // Preserve rendered image URLs when filling missing metadata.
     if (_needsBangumiInfoRefresh(infoController.bangumiItem)) {
       _showBangumiInfoSkeleton = true;
       queryBangumiInfoByID(
@@ -226,8 +226,6 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
         enforceMinimumLoadingDuration: true,
       );
     }
-    sourceTabController =
-        TabController(length: pluginsController.pluginList.length, vsync: this);
     infoTabController = TabController(length: _infoTabs.length, vsync: this);
     _fabTabIndex = infoTabController.index;
     showRating = GStorage.getSetting(SettingsKeys.showRating);
@@ -304,7 +302,6 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     infoController.staffList.clear();
     infoController.clearRelations();
     infoController.pluginSearchResponseList.clear();
-    sourceTabController.dispose();
     infoTabController.dispose();
     super.dispose();
   }
@@ -430,7 +427,6 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
                             _isShowingBangumiInfoSkeleton;
                         return Stack(
                           children: [
-                            // No background image when loading to make loading looks better
                             if (!showBangumiInfoSkeleton)
                               Positioned.fill(
                                 bottom: kTextTabBarHeight,
@@ -514,13 +510,10 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
                   tooltip: '开始观看',
                   onPressed: () {
                     showAdaptiveBottomSheet<void>(
-                      backgroundColor:
-                          Theme.of(context).scaffoldBackgroundColor,
                       context: context,
+                      maxHeightFactor: 0.88,
                       builder: (context) {
-                        return SourceSheet(
-                            tabController: sourceTabController,
-                            infoController: infoController);
+                        return SourceSheet(infoController: infoController);
                       },
                     );
                   },

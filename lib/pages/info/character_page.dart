@@ -1,46 +1,56 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
+
+import 'package:kazumi/bean/card/network_img_layer.dart';
+import 'package:kazumi/bean/card/user_comments_card.dart';
+import 'package:kazumi/bean/dialog/material_bottom_sheet.dart';
+import 'package:kazumi/bean/widget/connected_tabs.dart';
+import 'package:kazumi/bean/widget/content_section.dart';
+import 'package:kazumi/bean/widget/error_widget.dart';
+import 'package:kazumi/bean/widget/image_preview.dart';
+import 'package:kazumi/bean/widget/tonal_card.dart';
 import 'package:kazumi/modules/character/character_full_item.dart';
 import 'package:kazumi/modules/comments/comment_item.dart';
 import 'package:kazumi/request/apis/bangumi_api.dart';
-import 'package:kazumi/bean/card/network_img_layer.dart';
-import 'package:kazumi/bean/card/character_comments_card.dart';
-import 'package:kazumi/bean/dialog/material_bottom_sheet.dart';
-import 'package:kazumi/bean/widget/error_widget.dart';
-import 'package:kazumi/bean/widget/image_preview.dart';
+import 'package:kazumi/utils/constants.dart';
+
+const Set<String> _hiddenInfoKeys = {'引用来源'};
 
 class CharacterPage extends StatefulWidget {
   const CharacterPage({
     super.key,
     required this.characterID,
     required this.characterName,
+    required this.characterRelation,
   });
 
   final int characterID;
+
+  // Use the tapped name to keep the header height stable while loading.
   final String characterName;
+  final String characterRelation;
 
   @override
   State<CharacterPage> createState() => _CharacterPageState();
 }
 
 class _CharacterPageState extends State<CharacterPage> {
-  late CharacterFullItem characterFullItem;
-  bool loadingCharacter = true;
+  CharacterFullItem? characterFullItem;
   List<CharacterCommentItem> commentsList = [];
   bool loadingComments = true;
   bool commentsError = false;
 
   Future<void> loadCharacter() async {
     setState(() {
-      loadingCharacter = true;
+      characterFullItem = null;
     });
-    await BangumiApi.getCharacterByCharacterID(widget.characterID)
-        .then((character) {
-      characterFullItem = character;
-    });
+    final character =
+        await BangumiApi.getCharacterByCharacterID(widget.characterID);
     if (mounted) {
       setState(() {
-        loadingCharacter = false;
+        characterFullItem = character;
       });
     }
   }
@@ -82,7 +92,7 @@ class _CharacterPageState extends State<CharacterPage> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: Theme.of(context).colorScheme.surface,
+        backgroundColor: Colors.transparent,
         body: Column(
           children: [
             MaterialBottomSheetHeader(
@@ -90,13 +100,10 @@ class _CharacterPageState extends State<CharacterPage> {
               description: _headerDescription,
               onClose: () => Navigator.of(context).pop(),
             ),
-            const MaterialBottomSheetTabBar(
-              tabs: [
-                Tab(text: '资料'),
-                Tab(text: '吐槽'),
-              ],
+            const ConnectedTabs(
+              padding: materialBottomSheetTabsPadding,
+              labels: ['资料', '吐槽'],
             ),
-            const SizedBox(height: 8),
             Expanded(
               child: TabBarView(
                 children: [characterInfoBody, characterCommentsBody],
@@ -109,35 +116,19 @@ class _CharacterPageState extends State<CharacterPage> {
   }
 
   String get _headerTitle {
-    if (loadingCharacter) {
-      final initialName = widget.characterName.trim();
-      return initialName.isEmpty ? '正在加载…' : initialName;
-    }
-
-    final localizedName = characterFullItem.nameCN.trim();
-    if (localizedName.isNotEmpty) return localizedName;
-    final originalName = characterFullItem.name.trim();
-    if (originalName.isNotEmpty) return originalName;
-    return '人物';
+    final name = widget.characterName.trim();
+    return name.isEmpty ? '人物' : name;
   }
 
   String? get _headerDescription {
-    if (loadingCharacter) return null;
-    if (characterFullItem.id == 0) return '未能加载人物资料';
-
-    final localizedName = characterFullItem.nameCN.trim();
-    final originalName = characterFullItem.name.trim();
-    if (originalName.isNotEmpty && originalName != localizedName) {
-      return originalName;
-    }
-    return null;
+    final relation = widget.characterRelation.trim();
+    if (relation.isEmpty || relation == '未知') return null;
+    return relation;
   }
 
   Widget get characterInfoBody {
-    if (loadingCharacter) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (characterFullItem.id == 0) {
+    final character = characterFullItem;
+    if (character != null && character.id == 0) {
       return GeneralErrorWidget(
         errMsg: '什么都没有找到 (´;ω;`)',
         actions: [
@@ -149,51 +140,93 @@ class _CharacterPageState extends State<CharacterPage> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final portraitWidth =
-            (constraints.maxWidth * 0.3).clamp(104.0, 176.0).toDouble();
-        final contentHeight =
-            constraints.maxHeight - materialBottomSheetContentPadding.vertical;
-        final details = Column(
+    if (character == null) {
+      return const SingleChildScrollView(
+        padding: materialBottomSheetContentPadding,
+        child: Skeletonizer.zone(
+            child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildInfoSection(
-              context,
-              title: '基本信息',
-              icon: Icons.badge_outlined,
-              content: characterFullItem.info,
-              emptyText: '暂无基本信息',
+            Bone(height: 180, width: 120, uniRadius: 16),
+            SizedBox(height: 24),
+            Bone.multiText(lines: 5),
+          ],
+        )),
+      );
+    }
+    final fields = character.infobox
+        .where((f) => !_hiddenInfoKeys.contains(f.key))
+        .toList();
+    return SingleChildScrollView(
+      padding: materialBottomSheetContentPadding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TonalCard(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildPortrait(context, character, 104, 176),
+                  const SizedBox(width: 20),
+                  Expanded(
+                      child: SelectionArea(
+                          child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final field in fields.take(3)) ...[
+                        _buildBlock(context, field),
+                        const SizedBox(height: 12),
+                      ],
+                      if (fields.isEmpty)
+                        Text('暂无资料',
+                            style: Theme.of(context).textTheme.bodyMedium),
+                    ],
+                  ))),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            _buildInfoSection(
-              context,
-              title: '角色简介',
-              icon: Icons.auto_stories_outlined,
-              content: characterFullItem.summary,
-              emptyText: '暂无角色简介',
+          ),
+          if (character.summary.trim().isNotEmpty) ...[
+            const SizedBox(height: 24),
+            ContentSection(
+              title: '简介',
+              child: SelectableText(character.summary.trim(),
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(height: 1.6)),
             ),
           ],
-        );
-
-        return Padding(
-          padding: materialBottomSheetContentPadding,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildPortrait(context, portraitWidth, contentHeight),
-              const SizedBox(width: 16),
-              Expanded(
-                child: SingleChildScrollView(child: details),
-              ),
-            ],
-          ),
-        );
-      },
+          if (fields.length > 3) ...[
+            const SizedBox(height: 24),
+            ContentSection(
+              title: '更多资料',
+              child: SelectionArea(
+                  child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final field in fields.skip(3)) ...[
+                    _buildBlock(context, field),
+                    const SizedBox(height: 16),
+                  ],
+                ],
+              )),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _buildPortrait(BuildContext context, double width, double height) {
-    final heroTag = ImageViewer.heroTagFor(characterFullItem.image, 0);
+  Widget _buildPortrait(
+    BuildContext context,
+    CharacterFullItem character,
+    double width,
+    double height,
+  ) {
+    final heroTag = ImageViewer.heroTagFor(character.image, 0);
 
     return Semantics(
       button: true,
@@ -201,13 +234,13 @@ class _CharacterPageState extends State<CharacterPage> {
       child: Tooltip(
         message: '查看原图',
         child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(materialBottomSheetRadius),
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.all(StyleString.imgRadius),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () => ImageViewer.show(
               context,
-              imageUrls: [characterFullItem.image],
+              imageUrls: [character.image],
               heroTag: heroTag,
             ),
             child: Hero(
@@ -215,7 +248,7 @@ class _CharacterPageState extends State<CharacterPage> {
               child: NetworkImgLayer(
                 width: width,
                 height: height,
-                src: characterFullItem.image,
+                src: character.image,
               ),
             ),
           ),
@@ -224,39 +257,36 @@ class _CharacterPageState extends State<CharacterPage> {
     );
   }
 
-  Widget _buildInfoSection(
-    BuildContext context, {
-    required String title,
-    required IconData icon,
-    required String content,
-    required String emptyText,
-  }) {
-    final text = content.trim();
-    final colorScheme = Theme.of(context).colorScheme;
+  Widget _buildBlock(BuildContext context, CharacterInfoField field) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
-    return MaterialBottomSheetSection(
-      title: title,
-      icon: icon,
-      child: SelectionArea(
-        child: Text(
-          text.isEmpty ? emptyText : text,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: text.isEmpty
-                    ? colorScheme.onSurfaceVariant
-                    : colorScheme.onSurface,
-                height: 1.55,
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          field.key,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      ),
+        const SizedBox(height: 4),
+        Text(
+          field.value,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: colorScheme.onSurface,
+            height: 1.6,
+          ),
+        ),
+      ],
     );
   }
 
   Widget get characterCommentsBody {
     return CustomScrollView(
       scrollBehavior: const ScrollBehavior().copyWith(
-        // Scrollbars' movement is not linear so hide it.
         scrollbars: false,
-        // Enable mouse drag to refresh
         dragDevices: {
           PointerDeviceKind.mouse,
           PointerDeviceKind.touch,
@@ -264,13 +294,12 @@ class _CharacterPageState extends State<CharacterPage> {
       ),
       slivers: [
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: materialBottomSheetContentPadding,
           sliver: Builder(builder: (context) {
             if (loadingComments) {
-              return const SliverFillRemaining(
-                child: Center(
-                  child: CircularProgressIndicator(),
-                ),
+              return SliverList.builder(
+                itemCount: 3,
+                itemBuilder: (context, _) => const UserCommentsCardBone(),
               );
             }
             if (commentsError) {
@@ -298,15 +327,12 @@ class _CharacterPageState extends State<CharacterPage> {
             return SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  // Fix scroll issue caused by height change of network images
-                  // by keeping loaded cards alive.
+                  // Keep loaded images alive to prevent scroll jumps.
                   return KeepAlive(
                     keepAlive: true,
                     child: IndexedSemantics(
                       index: index,
-                      child: CharacterCommentsCard(
-                        commentItem: commentsList[index],
-                      ),
+                      child: UserCommentsCard.character(commentsList[index]),
                     ),
                   );
                 },

@@ -235,7 +235,7 @@ class SettingsKeys {
   );
   static const showPlayerError = SettingKey<bool>(
     _SettingBoxKey.showPlayerError,
-    true,
+    false,
     group: SettingGroup.player,
   );
   static const oledEnhance = SettingKey<bool>(
@@ -428,6 +428,7 @@ class SettingsKeys {
     true,
     group: SettingGroup.interface,
   );
+  // Retained for legacy settings compatibility; no longer controls the UI.
   static const showAnimeCounter = SettingKey<bool>(
     _SettingBoxKey.showAnimeCounter,
     false,
