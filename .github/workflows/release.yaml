@@ -62,7 +62,13 @@ jobs:
         run: flutter pub get
         shell: bash
       - name: Analyze Flutter project
-        run: flutter analyze --no-fatal-infos --fatal-warnings
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee analyze_output.txt
+          echo "### Flutter Analyze Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat analyze_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
         shell: bash
 
   flutter-build-android:
