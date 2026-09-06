@@ -135,6 +135,7 @@
           - name: Build Flutter for Android
             run: >-
               flutter build apk --split-per-abi
+              --target-platform android-arm,android-arm64
               --dart-define=DANDANAPI_APPID=$DANDANAPI_APPID
               --dart-define=DANDANAPI_KEY=$DANDANAPI_KEY
               --dart-define=KAZUMI_APPID=$KAZUMI_APPID
@@ -316,7 +317,7 @@
                   libxkbcommon-dev libxrandr-dev libxss-dev libxv-dev libxvidcore-dev \
                   linux-libc-dev nasm ninja-build pkg-config python3 python3-docutils wayland-protocols \
                   x11proto-core-dev zlib1g-dev libfdk-aac-dev libtheora-dev libwebp-dev \
-                  unixodbc-dev libpq-dev libxxhash-dev libaom-dev 
+                  unixodbc-dev libpq-dev libxxhash-dev libaom-dev libmpv-dev 
             shell: bash
           - name: Set up Flutter
             uses: subosito/flutter-action@v2.16.0

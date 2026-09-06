@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as image;
 import 'package:kazumi/services/logging/logger.dart';
@@ -24,7 +25,7 @@ class CaptchaOcrService {
   // normalized to [-1,1] as (x/255 - 0.5)/0.5, padded to a multiple of 16.
   static const int _recHeight = 48;
 
-  static bool get isSupported => true;
+  static bool get isSupported => !kIsWeb;
 
   static OrtEnv? _env;
   static OrtSession? _detSession;
