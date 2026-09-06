@@ -321,6 +321,10 @@ jobs:
           tar -zcvf Kazumi_linux_${{ env.tag }}_amd64.tar.gz -C build/linux/x64/release/bundle .
 
           # Debian package
+          DEB_VER="${{ env.tag }}"
+          DEB_VER="${DEB_VER#v}"
+          [[ "$DEB_VER" =~ ^[0-9] ]] || DEB_VER="0.0.0-${DEB_VER}"
+
           mkdir Kazumi_linux_${{ env.tag }}_amd64
           cd Kazumi_linux_${{ env.tag }}_amd64
           mkdir -p opt/Kazumi
@@ -334,7 +338,7 @@ jobs:
           cat>DEBIAN/control<<EOF
           Maintainer: madoka773 <valigarmanda55@gmail.com>
           Package: Kazumi
-          Version: ${{ env.tag }}
+          Version: $DEB_VER
           Section: x11
           Priority: optional
           Architecture: amd64
@@ -422,6 +426,10 @@ jobs:
           tar -zcvf Kazumi_linux_${{ env.tag }}_arm64.tar.gz -C build/linux/arm64/release/bundle .
 
           # Debian package
+          DEB_VER="${{ env.tag }}"
+          DEB_VER="${DEB_VER#v}"
+          [[ "$DEB_VER" =~ ^[0-9] ]] || DEB_VER="0.0.0-${DEB_VER}"
+
           mkdir Kazumi_linux_${{ env.tag }}_arm64
           cd Kazumi_linux_${{ env.tag }}_arm64
           mkdir -p opt/Kazumi
@@ -435,7 +443,7 @@ jobs:
           cat>DEBIAN/control<<EOF
           Maintainer: madoka773 <valigarmanda55@gmail.com>
           Package: Kazumi
-          Version: ${{ env.tag }}
+          Version: $DEB_VER
           Section: x11
           Priority: optional
           Architecture: arm64
@@ -597,7 +605,9 @@ jobs:
       - name: List files in windows_outputs directory
         run: ls -l windows_zip_signed_outputs   
       - name: Copy windows build file to root
-        run: cp windows_zip_signed_outputs/* Kazumi_windows_${{ env.tag }}.zip
+        run: |
+          cp windows_zip_signed_outputs/* .
+          ls -l Kazumi_windows_*.zip
 
       - name: Download windows msix build file
         uses: actions/download-artifact@v4
@@ -607,7 +617,10 @@ jobs:
       - name: List files in windows_msix_signed_outputs directory
         run: ls -l windows_msix_signed_outputs   
       - name: Copy windows build file to root
-        run: cp windows_msix_signed_outputs/* Kazumi_windows_${{ env.tag }}.msix
+        run: |
+          cp windows_msix_signed_outputs/* .
+          if [ -f kazumi.msix ]; then mv kazumi.msix Kazumi_windows_${{ env.tag }}.msix; fi
+          ls -l Kazumi_windows_*.msix
 
       - name: Download android build file
         uses: actions/download-artifact@v4
