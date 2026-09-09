@@ -4,6 +4,7 @@ import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart';
+import 'package:kazumi/utils/anime_title_helper.dart';
 import 'package:kazumi/utils/async_session.dart';
 
 class PluginSearchService {
@@ -19,9 +20,23 @@ class PluginSearchService {
   /// Per-plugin sessions so a replacement query (alias/manual search)
   /// invalidates the write-back of the still-running previous one.
   final Map<String, AsyncSessionOwner> _querySessions = {};
+
+  /// Records the actual keyword that produced search results for each plugin.
+  final Map<String, String> _matchedKeywords = {};
+
   bool _isCancelled = false;
 
+  /// Returns the keyword that produced results for [pluginName], if any.
+  String? getMatchedKeyword(String pluginName) => _matchedKeywords[pluginName];
+
   Future<void> querySource(String keyword, String pluginName) async {
+    await querySourceWithCandidates([keyword], pluginName);
+  }
+
+  Future<void> querySourceWithCandidates(
+    List<String> candidates,
+    String pluginName,
+  ) async {
     for (final plugin in pluginsController.pluginList) {
       if (plugin.name == pluginName) {
         infoController.pluginSearchResponseList.removeWhere(
@@ -29,7 +44,8 @@ class PluginSearchService {
         );
         infoController.pluginSearchStatus[pluginName] =
             PluginSearchStatus.pending;
-        await _queryPlugin(plugin, keyword);
+        _matchedKeywords.remove(pluginName);
+        await _queryPluginWithCandidates(plugin, candidates);
         return;
       }
     }
@@ -57,8 +73,13 @@ class PluginSearchService {
   }
 
   Future<void> queryAllSource(String keyword) async {
+    await queryAllSourceWithCandidates([keyword]);
+  }
+
+  Future<void> queryAllSourceWithCandidates(List<String> candidates) async {
     infoController.pluginSearchResponseList.clear();
     infoController.pluginSearchStatus.clear();
+    _matchedKeywords.clear();
 
     final plugins = List<Plugin>.of(pluginsController.pluginList);
     for (final plugin in plugins) {
@@ -66,32 +87,80 @@ class PluginSearchService {
           PluginSearchStatus.pending;
     }
     await Future.wait(
-      plugins.map((plugin) => _queryPlugin(plugin, keyword)),
+      plugins.map((plugin) => _queryPluginWithCandidates(plugin, candidates)),
     );
   }
 
-  Future<void> _queryPlugin(Plugin plugin, String keyword) async {
+  Future<void> _queryPluginWithCandidates(
+    Plugin plugin,
+    List<String> candidates,
+  ) async {
     if (_isCancelled) return;
     final session = _querySessions
         .putIfAbsent(plugin.name, AsyncSessionOwner.new)
         .begin();
-    try {
-      final result = await plugin.queryBangumi(
-        keyword,
-        shouldRethrow: true,
-        cancelToken: _cancelToken,
-      );
+
+    final validCandidates = candidates
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .take(6)
+        .toList();
+
+    if (validCandidates.isEmpty) {
       if (_isCancelled || session.isStale) return;
       infoController.pluginSearchStatus[plugin.name] =
-          PluginSearchStatus.success;
-      if (result.data.isNotEmpty) {
-        pluginsController.validityTracker.markSearchValid(plugin.name);
-      }
-      infoController.pluginSearchResponseList.add(result);
-    } catch (error) {
-      if (_isCancelled || session.isStale) return;
-      _handleSearchError(plugin, error);
+          PluginSearchStatus.noResult;
+      return;
     }
+
+    final primaryKeyword = validCandidates.first;
+
+    for (var i = 0; i < validCandidates.length; i++) {
+      final keyword = validCandidates[i];
+      if (_isCancelled || session.isStale) return;
+
+      try {
+        final result = await plugin.queryBangumi(
+          keyword,
+          shouldRethrow: true,
+          cancelToken: _cancelToken,
+        );
+        if (_isCancelled || session.isStale) return;
+
+        if (result.data.isNotEmpty) {
+          final rankedData = AnimeTitleHelper.rankSearchResults(
+            result.data,
+            targetTitle: primaryKeyword,
+            aliases: validCandidates,
+          );
+          final finalResult = PluginSearchResponse(
+            pluginName: plugin.name,
+            data: rankedData,
+          );
+          _matchedKeywords[plugin.name] = keyword;
+          infoController.pluginSearchStatus[plugin.name] =
+              PluginSearchStatus.success;
+          pluginsController.validityTracker.markSearchValid(plugin.name);
+          infoController.pluginSearchResponseList.add(finalResult);
+          return;
+        }
+      } on NoResultException {
+        // 当前候选词无结果，继续尝试下一个候选词变体
+        continue;
+      } catch (error) {
+        if (_isCancelled || session.isStale) return;
+        _handleSearchError(plugin, error);
+        return;
+      }
+    }
+
+    // 所有候选词变体均未找到结果
+    if (_isCancelled || session.isStale) return;
+    KazumiLogger().i(
+      'PluginSearchService: no results for ${plugin.name} after trying ${validCandidates.length} candidate(s)',
+    );
+    infoController.pluginSearchStatus[plugin.name] = PluginSearchStatus.noResult;
   }
 
   void _handleSearchError(Plugin plugin, Object error) {

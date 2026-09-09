@@ -22,6 +22,7 @@ import 'package:kazumi/services/plugin/captcha_verification_service.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart'
     show RuleCancelToken;
+import 'package:kazumi/utils/anime_title_helper.dart';
 import 'package:kazumi/utils/device.dart';
 import 'package:kazumi/services/ocr/captcha_ocr_service.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -45,6 +46,7 @@ class _SourceSheetState extends State<SourceSheet> {
   final Map<String, String> _sourceKeywords = {};
 
   late final String _keyword;
+  late final List<String> _candidates;
   late final PluginSearchService _searchService;
   late final _SourceCaptchaFlow _captchaFlow;
   RuleCancelToken? _chapterCancelToken;
@@ -54,6 +56,11 @@ class _SourceSheetState extends State<SourceSheet> {
     super.initState();
     final item = widget.infoController.bangumiItem;
     _keyword = item.nameCn.isEmpty ? item.name : item.nameCn;
+    _candidates = AnimeTitleHelper.generateSearchCandidates(
+      title: _keyword,
+      originalName: item.name != _keyword ? item.name : null,
+      aliases: item.alias,
+    );
     _searchService = PluginSearchService(
       infoController: widget.infoController,
       pluginsController: _pluginsController,
@@ -62,7 +69,7 @@ class _SourceSheetState extends State<SourceSheet> {
       onVerified: _showVerifiedResult,
       onCancelled: (plugin) => _retry(plugin.name),
     );
-    _searchService.queryAllSource(_keyword);
+    _searchService.queryAllSourceWithCandidates(_candidates);
   }
 
   @override
@@ -73,7 +80,10 @@ class _SourceSheetState extends State<SourceSheet> {
     super.dispose();
   }
 
-  String _keywordFor(String name) => _sourceKeywords[name] ?? _keyword;
+  String _keywordFor(String name) =>
+      _sourceKeywords[name] ??
+      _searchService.getMatchedKeyword(name) ??
+      _keyword;
 
   Plugin _pluginFor(String name) =>
       _pluginsController.pluginList.firstWhere((plugin) => plugin.name == name);
@@ -82,7 +92,11 @@ class _SourceSheetState extends State<SourceSheet> {
     final trimmed = keyword.trim();
     if (!mounted || trimmed.isEmpty) return;
     setState(() => _sourceKeywords[pluginName] = trimmed);
-    _searchService.querySource(trimmed, pluginName);
+    final candidates = AnimeTitleHelper.generateSearchCandidates(
+      title: trimmed,
+      aliases: widget.infoController.bangumiItem.alias,
+    );
+    _searchService.querySourceWithCandidates(candidates, pluginName);
   }
 
   void _retry(String name) => _querySource(_keywordFor(name), name);
@@ -156,16 +170,36 @@ class _SourceSheetState extends State<SourceSheet> {
   }
 
   void _showAliasPicker(String pluginName) {
-    if (widget.infoController.bangumiItem.alias.isEmpty) {
+    final item = widget.infoController.bangumiItem;
+    final generatedCandidates = AnimeTitleHelper.generateSearchCandidates(
+      title: _keyword,
+      originalName: item.name != _keyword ? item.name : null,
+      aliases: item.alias,
+      maxCandidates: 16,
+    );
+    final combinedAliases = <String>[];
+    final seen = <String>{_keyword.toLowerCase()};
+
+    for (final a in [...item.alias, ...generatedCandidates]) {
+      final trimmed = a.trim();
+      if (trimmed.isEmpty) continue;
+      if (seen.add(trimmed.toLowerCase())) {
+        combinedAliases.add(trimmed);
+      }
+    }
+
+    if (combinedAliases.isEmpty) {
       KazumiDialog.showToast(message: '无可用别名，试试修改检索关键词');
       return;
     }
     _showAliasPickerDialog(
       sourceName: pluginName,
-      aliases: widget.infoController.bangumiItem.alias,
+      aliases: combinedAliases,
       onAliasSelected: (alias) => _querySource(alias, pluginName),
-      onAliasesChanged: () => _collectController
-          .updateLocalCollect(widget.infoController.bangumiItem),
+      onAliasesChanged: () {
+        item.alias = combinedAliases;
+        _collectController.updateLocalCollect(item);
+      },
     );
   }
 
