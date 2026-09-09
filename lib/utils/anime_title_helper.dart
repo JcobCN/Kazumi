@@ -1,3 +1,5 @@
+import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+import 'package:kazumi/modules/bangumi/bangumi_relation.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
 
 class AnimeTitleHelper {
@@ -485,6 +487,166 @@ class AnimeTitleHelper {
     });
 
     return scoredItems.map((e) => e.item).toList();
+  }
+
+  /// 常见非剧集标题的噪点后缀或前缀（如分辨率、完结状态、语言、来源等）
+  static final RegExp _noiseTagRegExp = RegExp(
+    r'(?:\[|\(|【|\s)*(?:1080[pP]|720[pP]|4[kK]|HD|BD|完结|全集|全\d+[话集]|超清|高清|国语|日语|中字|中配|正片)+(?:\]|\)|】|\s)*',
+  );
+
+  /// 清除标题中的视频规格与状态噪点（如 "1080P"、"[完结]"、"全集" 等）
+  static String cleanNoise(String title) {
+    var cleaned = title.replaceAll(_noiseTagRegExp, ' ').trim();
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return cleaned.isEmpty ? title.trim() : cleaned;
+  }
+
+  /// 提取标题中的季数阿拉伯数字（公开方法）
+  static int? extractSeasonNumber(String title) => _extractSeasonNumber(title);
+
+  /// 根据当前播放/选中的视频源标题与 Bangumi 条目名，解析出最完整且规范的下载项标题。
+  /// 解决用户通过主条目（如 "赌博默示录" 或 "xxx"）进入，实际观看并下载的是 "赌博默示录 破戒录篇" 或 "xxx 第二季"
+  /// 时，下载列表仅显示主条目名称而缺少副标题或季度信息的问题。
+  static String resolveDownloadTitle({
+    required String currentTitle,
+    required String bangumiName,
+  }) {
+    final cleanCurrent = cleanNoise(currentTitle);
+    final cleanBangumi = bangumiName.trim();
+
+    if (cleanCurrent.isEmpty) return cleanBangumi;
+    if (cleanBangumi.isEmpty) return cleanCurrent;
+
+    final simplifiedCurrent = _simplifyForComparison(cleanCurrent);
+    final simplifiedBangumi = _simplifyForComparison(cleanBangumi);
+
+    // 1. 如果当前标题与 Bangumi 名完全一致，直接返回
+    if (simplifiedCurrent == simplifiedBangumi) {
+      return cleanBangumi;
+    }
+
+    // 2. 如果当前标题包含了 Bangumi 名（例如 "赌博默示录 破戒录篇" 包含 "赌博默示录"），
+    // 优先采用带有副标题/季度的当前标题
+    if (simplifiedCurrent.contains(simplifiedBangumi)) {
+      return cleanCurrent;
+    }
+
+    // 3. 检查当前标题是否仅为季数或纯副标题表达（如 "第二季"、"第2季"、"破戒录篇"）
+    final isSeasonOnly = _chineseSeasonRegExp.hasMatch(cleanCurrent) ||
+        _arabicSeasonRegExp.hasMatch(cleanCurrent) ||
+        _englishSeasonRegExp.hasMatch(cleanCurrent);
+
+    final mainTitle = extractMainTitle(cleanCurrent);
+    if (isSeasonOnly || (mainTitle == null && cleanCurrent.length <= 8)) {
+      return '$cleanBangumi $cleanCurrent';
+    }
+
+    // 4. 如果当前标题有副标题，提取并追加到主条目名
+    final subtitle = extractSubtitle(cleanCurrent);
+    if (subtitle != null && subtitle.isNotEmpty) {
+      final simplifiedSub = _simplifyForComparison(subtitle);
+      if (!simplifiedBangumi.contains(simplifiedSub)) {
+        return '$cleanBangumi $subtitle';
+      }
+    }
+
+    // 5. 兜底返回去噪后的当前播放标题
+    return cleanCurrent;
+  }
+
+  /// 从 Bangumi 关联条目列表（前传/续集等）中寻找与当前选中的视频源标题匹配的条目。
+  /// 例如：用户在 "赌博默示录" (ID: 2145) 的选源弹窗中点击了 "赌博默示录 破戒录篇"，
+  /// 算法将从关联列表中匹配到续集 "逆境無頼カイジ 破戒録篇" (ID: 10972)，从而为播放和下载关联正确的季数元数据与独立 ID。
+  static BangumiItem? findMatchingRelation({
+    required String searchTitle,
+    required List<BangumiRelation> relations,
+  }) {
+    if (relations.isEmpty) return null;
+
+    final cleanTitle = cleanNoise(searchTitle);
+    final simplifiedTitle = _simplifyForComparison(cleanTitle);
+    final targetSeason = extractSeasonNumber(cleanTitle);
+    final targetSubtitle = extractSubtitle(cleanTitle);
+    final simplifiedSubtitle = targetSubtitle != null
+        ? _simplifyForComparison(targetSubtitle)
+        : null;
+
+    for (final rel in relations) {
+      final item = rel.bangumiItem;
+      final simplifiedName = _simplifyForComparison(item.name);
+      final simplifiedNameCn = _simplifyForComparison(item.nameCn);
+
+      // (A) 完全或包含匹配
+      if (simplifiedTitle == simplifiedNameCn ||
+          simplifiedTitle == simplifiedName ||
+          (simplifiedTitle.length >= 4 &&
+              (simplifiedNameCn.contains(simplifiedTitle) ||
+                  simplifiedTitle.contains(simplifiedNameCn)))) {
+        return item;
+      }
+
+      // (B) 别名匹配
+      for (final alias in item.alias) {
+        final simplifiedAlias = _simplifyForComparison(alias);
+        if (simplifiedAlias.isEmpty) continue;
+        if (simplifiedTitle == simplifiedAlias ||
+            simplifiedTitle.contains(simplifiedAlias)) {
+          return item;
+        }
+      }
+
+      // (C) 季数匹配（例如 relation 是 "续集"，且 searchTitle 是 "第二季"）
+      if (targetSeason != null) {
+        final relSeason = extractSeasonNumber(item.nameCn) ??
+            extractSeasonNumber(item.name) ??
+            (rel.relation == '续集' ? 2 : null);
+        if (relSeason == targetSeason) {
+          return item;
+        }
+      }
+
+      // (D) 副标题匹配（例如 "破戒录篇"）
+      if (simplifiedSubtitle != null && simplifiedSubtitle.length >= 2) {
+        if (simplifiedNameCn.contains(simplifiedSubtitle) ||
+            simplifiedName.contains(simplifiedSubtitle)) {
+          return item;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// 为播放页与下载流程解析目标 BangumiItem：
+  /// 若选中的视频源标题指向关联季度（如破戒录篇/第二季），则优先关联正确的关联条目；
+  /// 若无关联条目，则更新条目展示名为包含季度/副标题的完整标题，避免元数据丢失。
+  static BangumiItem resolvePlaybackBangumiItem({
+    required BangumiItem currentBangumiItem,
+    required List<BangumiRelation> relations,
+    required String searchTitle,
+  }) {
+    final matchedRelation = findMatchingRelation(
+      searchTitle: searchTitle,
+      relations: relations,
+    );
+
+    if (matchedRelation != null) {
+      return matchedRelation;
+    }
+
+    final resolvedTitle = resolveDownloadTitle(
+      currentTitle: searchTitle,
+      bangumiName: currentBangumiItem.nameCn.isNotEmpty
+          ? currentBangumiItem.nameCn
+          : currentBangumiItem.name,
+    );
+
+    if (resolvedTitle != currentBangumiItem.nameCn &&
+        resolvedTitle.isNotEmpty) {
+      return currentBangumiItem.copyWith(nameCn: resolvedTitle);
+    }
+
+    return currentBangumiItem;
   }
 
   /// 提取标题中的季数阿拉伯数字（如 "第二季" -> 2, "第2季" -> 2, "Season 2" -> 2）

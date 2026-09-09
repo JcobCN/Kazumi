@@ -469,7 +469,8 @@ abstract class _DownloadController with Store {
   }) async {
     final recordKey = '${pluginName}_$bangumiId';
 
-    final record = _repository.getRecord(recordKey) ??
+    final existingRecord = _repository.getRecord(recordKey);
+    final record = existingRecord ??
         DownloadRecord(
           bangumiId,
           bangumiName,
@@ -478,6 +479,16 @@ abstract class _DownloadController with Store {
           {},
           DateTime.now(),
         );
+
+    if (existingRecord != null && bangumiName.trim().isNotEmpty) {
+      if (record.bangumiName.trim() != bangumiName.trim()) {
+        record.bangumiName = bangumiName.trim();
+      }
+      if (record.bangumiCover.trim().isEmpty &&
+          bangumiCover.trim().isNotEmpty) {
+        record.bangumiCover = bangumiCover.trim();
+      }
+    }
 
     if (episodePageUrl.isNotEmpty) {
       for (final entry in record.episodes.entries) {

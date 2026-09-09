@@ -149,10 +149,17 @@ class _SourceSheetState extends State<SourceSheet> {
       if (!mounted || cancelToken.isCancelled) return;
       if (roads.isEmpty) throw ChapterErrorException(plugin.name);
       KazumiDialog.dismiss();
+
+      final playbackBangumiItem = AnimeTitleHelper.resolvePlaybackBangumiItem(
+        currentBangumiItem: widget.infoController.bangumiItem,
+        relations: widget.infoController.relationList,
+        searchTitle: searchItem.name,
+      );
+
       context.pushNamed(
         '/video/',
         arguments: OnlineVideoPlaybackArgs(
-          bangumiItem: widget.infoController.bangumiItem,
+          bangumiItem: playbackBangumiItem,
           plugin: plugin,
           title: searchItem.name,
           src: searchItem.src,

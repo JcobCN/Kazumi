@@ -10,6 +10,7 @@ import 'package:kazumi/modules/download/download_module.dart';
 import 'package:kazumi/modules/roads/road_module.dart';
 import 'package:kazumi/pages/download/download_controller.dart';
 import 'package:kazumi/pages/video/video_controller.dart';
+import 'package:kazumi/utils/anime_title_helper.dart';
 
 class DownloadEpisodeSheet extends StatefulWidget {
   final int road;
@@ -211,15 +212,20 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
 
     final sortedEpisodes = _selectedEpisodes.toList()..sort();
 
+    final downloadBangumiName = AnimeTitleHelper.resolveDownloadTitle(
+      currentTitle: videoPageController.title,
+      bangumiName: bangumiItem.nameCn.isNotEmpty
+          ? bangumiItem.nameCn
+          : bangumiItem.name,
+    );
+
     for (final episodeNumber in sortedEpisodes) {
       final episodePageUrl = currentRoadData.data[episodeNumber - 1];
       final identifier = currentRoadData.identifier[episodeNumber - 1];
 
       downloadController.startDownload(
         bangumiId: bangumiItem.id,
-        bangumiName: bangumiItem.nameCn.isNotEmpty
-            ? bangumiItem.nameCn
-            : bangumiItem.name,
+        bangumiName: downloadBangumiName,
         bangumiCover: bangumiItem.images['large'] ?? '',
         pluginName: plugin.name,
         episodeNumber: episodeNumber,

@@ -175,4 +175,44 @@ class BangumiItem {
       interest: interest,
     );
   }
+
+  BangumiItem copyWith({
+    int? id,
+    int? type,
+    String? name,
+    String? nameCn,
+    String? summary,
+    String? airDate,
+    int? airWeekday,
+    int? rank,
+    Map<String, String>? images,
+    List<BangumiTag>? tags,
+    List<String>? alias,
+    double? ratingScore,
+    int? votes,
+    List<int>? votesCount,
+    String? info,
+    List<String>? metaTags,
+    BangumiInterest? interest,
+  }) {
+    return BangumiItem(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      name: name ?? this.name,
+      nameCn: nameCn ?? this.nameCn,
+      summary: summary ?? this.summary,
+      airDate: airDate ?? this.airDate,
+      airWeekday: airWeekday ?? this.airWeekday,
+      rank: rank ?? this.rank,
+      images: images ?? Map<String, String>.from(this.images),
+      tags: tags ?? List<BangumiTag>.from(this.tags),
+      alias: alias ?? List<String>.from(this.alias),
+      ratingScore: ratingScore ?? this.ratingScore,
+      votes: votes ?? this.votes,
+      votesCount: votesCount ?? List<int>.from(this.votesCount),
+      info: info ?? this.info,
+      metaTags: metaTags ?? List<String>.from(this.metaTags),
+      interest: interest ?? this.interest,
+    );
+  }
 }
