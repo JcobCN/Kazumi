@@ -226,7 +226,7 @@ jobs:
 
   flutter-build-ios:
     needs: [flutter-test, flutter-analyze]
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_ios || (! inputs.run_android && ! inputs.run_windows && ! inputs.run_ios && ! inputs.run_macos && ! inputs.run_linux))) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_ios }}
     runs-on: "macos-latest"
     permissions:
       contents: read
