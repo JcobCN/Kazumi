@@ -136,12 +136,14 @@ class CaptchaOcrService {
 
       final mask = _probabilityToMask(probMap, resized.width, resized.height);
       final boxes = _findTextBoxes(mask);
+      // Boxes are in resized coordinates; ratioW/ratioH are
+      // originalSize / resizedSize, so multiply to map back.
       return boxes
           .map((b) => Box(
-                x1: b.x1 / ratioW,
-                y1: b.y1 / ratioH,
-                x2: b.x2 / ratioW,
-                y2: b.y2 / ratioH,
+                x1: b.x1 * ratioW,
+                y1: b.y1 * ratioH,
+                x2: b.x2 * ratioW,
+                y2: b.y2 * ratioH,
               ))
           .toList();
     } finally {
@@ -289,7 +291,24 @@ class CaptchaOcrService {
       final byY = a.y1.compareTo(b.y1);
       return byY != 0 ? byY : a.x1.compareTo(b.x1);
     });
-    return boxes;
+    // Drop fragments mostly contained in an already kept box: captcha
+    // strokes inside a detected text region otherwise decode to junk.
+    final kept = <_BoxQuad>[];
+    for (final b in boxes) {
+      var contained = false;
+      for (final k in kept) {
+        final iw = math.min(b.x2, k.x2) - math.max(b.x1, k.x1);
+        final ih = math.min(b.y2, k.y2) - math.max(b.y1, k.y1);
+        if (iw <= 0 || ih <= 0) continue;
+        final area = math.max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1));
+        if (iw * ih / area > 0.5) {
+          contained = true;
+          break;
+        }
+      }
+      if (!contained) kept.add(b);
+    }
+    return kept;
   }
 
   static Future<String> _recognizeLine(image.Image img, Box box) async {
