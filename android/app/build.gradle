@@ -12,6 +12,17 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+// Release signing config from android/key.properties (not committed).
+// When absent, release builds fall back to the debug signing config so
+// local builds without the keystore keep working.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
@@ -53,11 +64,22 @@ android {
         versionName flutterVersionName
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig signingConfigs.debug
+            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
     }
 }
