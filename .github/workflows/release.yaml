@@ -25,6 +25,7 @@ env:
   SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
   KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
   KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+  ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
 jobs:
   flutter-test:
@@ -116,6 +117,17 @@ jobs:
         shell: bash
       - name: Remove build id
         run: sed -i -e 's/-Wl,/-Wl,--build-id=none,/' ${{ steps.flutter-action.outputs.PUB-CACHE-PATH }}/hosted/pub.dev/jni-*/src/CMakeLists.txt
+      - name: Set up release signing (optional)
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/kazumi-release.jks
+          cat > android/key.properties <<EOF
+          storeFile=kazumi-release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+        shell: bash
       - name: Build Flutter for Android
         run: >-
           flutter build apk --split-per-abi

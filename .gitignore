@@ -54,3 +54,8 @@ android/build/reports/problems/
 **/macos/Pods/
 **/ios/Podfile.lock
 **/macos/Podfile.lock
+
+# Android release signing (injected from CI secrets or local key.properties)
+android/key.properties
+android/app/*.jks
+android/app/*.keystore
