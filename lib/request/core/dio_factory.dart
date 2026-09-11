@@ -95,6 +95,10 @@ class _BangumiMirrorInterceptor extends Interceptor {
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    if (options.extra['bypassMirror'] == true) {
+      handler.next(options);
+      return;
+    }
     final enableBangumiProxy =
         GStorage.getSetting(SettingsKeys.enableBangumiProxy);
     if (!enableBangumiProxy) {

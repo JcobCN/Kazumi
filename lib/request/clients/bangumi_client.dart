@@ -43,6 +43,7 @@ class BangumiClient {
     Object? data,
     Map<String, dynamic>? queryParameters,
     bool requiresAuth = false,
+    bool bypassMirror = false,
     CancelToken? cancelToken,
   }) async {
     try {
@@ -56,7 +57,9 @@ class BangumiClient {
             url: url,
             method: 'POST',
             data: data,
+            bypassMirror: bypassMirror,
           ),
+          extra: bypassMirror ? {'bypassMirror': true} : null,
         ),
         cancelToken: cancelToken,
       );
@@ -71,6 +74,7 @@ class BangumiClient {
     String? url,
     String method = 'GET',
     Object? data,
+    bool bypassMirror = false,
   }) {
     final headers = <String, dynamic>{...bangumiHTTPHeader};
     final bangumiSyncEnable =
@@ -79,7 +83,8 @@ class BangumiClient {
     if ((requiresAuth || bangumiSyncEnable) && token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
-    if (_shouldSignProtectedMirrorRequest(url, method)) {
+    if (!bypassMirror &&
+        _shouldSignProtectedMirrorRequest(url, method)) {
       final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final body = data == null ? '' : jsonEncode(data);
       headers['X-AppId'] = bangumiMirrorCredentials['id'];

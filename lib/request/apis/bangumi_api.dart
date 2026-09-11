@@ -32,6 +32,41 @@ class BangumiApi {
   static final AsyncRateLimiter _writeRateLimiter =
       AsyncRateLimiter(const Duration(milliseconds: 250));
 
+  /// Posts a subject-search request, retrying once through the bgmapi.com
+  /// community mirror when the primary attempt fails. This keeps search
+  /// usable when the official API is unreachable or when the kazumi.fyi
+  /// mirror rejects the request (e.g. self-built releases that lack the
+  /// KAZUMI_APPID/KAZUMI_KEY dart-defines produce invalid signatures).
+  static Future<dynamic> _postSearchWithMirrorFallback(
+    String url,
+    Map<String, dynamic> params,
+  ) async {
+    try {
+      return await _client.post(url, data: params);
+    } on Exception catch (e) {
+      final fallbackUrl = _toAuthMirrorUrl(url);
+      if (fallbackUrl == null) rethrow;
+      KazumiLogger().w(
+        'BangumiApi: search request failed, retrying via bgmapi mirror',
+        error: e,
+      );
+      return await _client.post(
+        fallbackUrl,
+        data: params,
+        bypassMirror: true,
+      );
+    }
+  }
+
+  /// Rebuilds an api.bgm.tv request URL against the bgmapi.com mirror.
+  static String? _toAuthMirrorUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.path.isEmpty) return null;
+    return ApiEndpoints.bangumiAuthAPIMirrorDomain +
+        uri.path +
+        (uri.hasQuery ? '?${uri.query}' : '');
+  }
+
   static Future<List<List<BangumiItem>>> getCalendar() async {
     List<List<BangumiItem>> bangumiCalendar = [];
     try {
@@ -76,10 +111,7 @@ class BangumiApi {
       final url = ApiEndpoints.formatUrl(
           ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
           [limit, offset]);
-      final jsonData = await _client.post(
-        url,
-        data: params,
-      );
+      final jsonData = await _postSearchWithMirrorFallback(url, params);
       final jsonList = jsonData['data'];
       for (dynamic jsonItem in jsonList) {
         if (jsonItem is Map<String, dynamic>) {
@@ -173,11 +205,11 @@ class BangumiApi {
       };
     }
     try {
-      final jsonData = await _client.post(
+      final jsonData = await _postSearchWithMirrorFallback(
         ApiEndpoints.formatUrl(
             ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
             [100, 0]),
-        data: params,
+        params,
       );
       final jsonList = jsonData['data'];
       for (dynamic jsonItem in jsonList) {
@@ -328,11 +360,11 @@ class BangumiApi {
     );
 
     try {
-      final jsonData = await _client.post(
+      final jsonData = await _postSearchWithMirrorFallback(
         ApiEndpoints.formatUrl(
             ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
             [limit, offset]),
-        data: params,
+        params,
       );
       final jsonList = jsonData['data'];
       for (dynamic jsonItem in jsonList) {
