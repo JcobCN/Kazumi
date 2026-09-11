@@ -291,22 +291,35 @@ class CaptchaOcrService {
       final byY = a.y1.compareTo(b.y1);
       return byY != 0 ? byY : a.x1.compareTo(b.x1);
     });
-    // Drop fragments mostly contained in an already kept box: captcha
-    // strokes inside a detected text region otherwise decode to junk.
+    // Drop redundant fragments: a box mostly inside another box (either
+    // direction) decodes to a duplicate or junk, since captcha strokes
+    // inside a detected text region are already covered by the larger box.
     final kept = <_BoxQuad>[];
     for (final b in boxes) {
-      var contained = false;
+      var drop = false;
+      final survivors = <_BoxQuad>[];
       for (final k in kept) {
         final iw = math.min(b.x2, k.x2) - math.max(b.x1, k.x1);
         final ih = math.min(b.y2, k.y2) - math.max(b.y1, k.y1);
-        if (iw <= 0 || ih <= 0) continue;
-        final area = math.max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1));
-        if (iw * ih / area > 0.5) {
-          contained = true;
+        if (iw <= 0 || ih <= 0) {
+          survivors.add(k);
+          continue;
+        }
+        final inter = iw * ih;
+        final areaB = math.max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1));
+        final areaK = math.max(1.0, (k.x2 - k.x1) * (k.y2 - k.y1));
+        if (inter / areaB > 0.5) {
+          drop = true;
           break;
         }
+        if (inter / areaK <= 0.5) survivors.add(k);
       }
-      if (!contained) kept.add(b);
+      if (!drop) {
+        kept
+          ..clear()
+          ..addAll(survivors)
+          ..add(b);
+      }
     }
     return kept;
   }
