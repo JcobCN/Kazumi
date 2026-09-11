@@ -1,5 +1,6 @@
 // ignore_for_file: library_private_types_in_public_api
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -12,6 +13,7 @@ import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/network/system_proxy_service.dart';
+import 'package:kazumi/services/player/hls_proxy/hls_proxy_server.dart';
 import 'package:kazumi/services/player/playback_cache_policy.dart';
 import 'package:kazumi/services/player/player_error_mapper.dart';
 import 'package:kazumi/services/player/player_screenshot_service.dart';
@@ -459,8 +461,20 @@ abstract class _PlayerPlaybackController with Store {
         }
       }
 
+      // HLS 源经由本地代理并行获取分片，绕过 CDN 单连接限速；非 HLS
+      // 源或代理初始化失败时回退为原始 URL，外部播放器/投屏等场景仍
+      // 使用原始地址。
+      final String playbackUrl = await HlsProxy.instance.resolvePlaybackUrl(
+        videoUrl(),
+        httpHeaders,
+        adBlockerEnabled: adBlockerEnabled,
+      );
+      if (!isCurrentPlayer(player)) {
+        return await _discardIfNotCurrent(candidate);
+      }
+
       await player.open(
-        Media(videoUrl(),
+        Media(playbackUrl,
             start: Duration(seconds: offset), httpHeaders: httpHeaders),
         play: autoPlay,
       );
@@ -619,6 +633,8 @@ abstract class _PlayerPlaybackController with Store {
 
   Future<void> stop() async {
     cachePolicy.stopWatching();
+    // 清理本地 HLS 代理会话；内部自带错误处理，不阻塞播放器释放。
+    unawaited(HlsProxy.instance.stop());
     final ownedPlayer = _ownedPlayer;
     _ownedPlayer = null;
     videoController = null;

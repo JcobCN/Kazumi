@@ -36,6 +36,7 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
   late bool playerDebugMode;
   late bool playerDisableAnimations;
   late bool forceAdBlocker;
+  late bool hlsProxyEnabled;
   late bool autoPlayNext;
   late bool backgroundPlayback;
   late bool brightnessVolumeGesture;
@@ -75,6 +76,7 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
     playerDisableAnimations =
         GStorage.getSetting<bool>(SettingsKeys.playerDisableAnimations);
     forceAdBlocker = GStorage.getSetting<bool>(SettingsKeys.forceAdBlocker);
+    hlsProxyEnabled = GStorage.getSetting<bool>(SettingsKeys.hlsProxyEnabled);
     playerLogLevel = GStorage.getSetting<int>(SettingsKeys.playerLogLevel);
 
     brightnessVolumeGesture =
@@ -368,6 +370,18 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
                 title: Text('广告过滤'),
                 description: Text('强制启用HLS广告过滤，忽略规则设置'),
                 initialValue: forceAdBlocker,
+              ),
+              SettingsTile.switchTile(
+                leading: Icons.rocket_launch_rounded,
+                onToggle: (value) async {
+                  hlsProxyEnabled = value ?? !hlsProxyEnabled;
+                  await GStorage.putSetting<bool>(
+                      SettingsKeys.hlsProxyEnabled, hlsProxyEnabled);
+                  setState(() {});
+                },
+                title: Text('并行加载视频'),
+                description: Text('通过本地代理并行获取HLS分片，缓解线路限速导致的卡顿'),
+                initialValue: hlsProxyEnabled,
               ),
               SettingsTile.switchTile(
                 leading: Icons.animation_rounded,

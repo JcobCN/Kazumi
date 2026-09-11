@@ -404,6 +404,11 @@ class SettingsKeys {
     false,
     group: SettingGroup.player,
   );
+  static const hlsProxyEnabled = SettingKey<bool>(
+    'hlsProxyEnabled',
+    true,
+    group: SettingGroup.player,
+  );
   static const backgroundPlayback = SettingKey<bool>(
     _SettingBoxKey.backgroundPlayback,
     false,
@@ -601,6 +606,7 @@ class SettingsKeys {
     timelineOnlyShowWatchingBangumis,
     useSystemFont,
     forceAdBlocker,
+    hlsProxyEnabled,
     backgroundPlayback,
     proxyEnable,
     proxyConfigured,
