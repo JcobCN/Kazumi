@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kazumi/bean/card/network_img_layer.dart';
+import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/modules/collect/collect_module.dart';
 import 'package:kazumi/modules/collect/collect_type.dart';
@@ -12,12 +13,14 @@ class CollectLibraryView extends StatefulWidget {
   const CollectLibraryView({
     super.key,
     required this.entries,
+    required this.showRating,
     required this.onOpen,
     required this.onChangeType,
     required this.canEdit,
   });
 
   final List<CollectedBangumi> entries;
+  final bool showRating;
   final ValueChanged<BangumiItem> onOpen;
   final void Function(BangumiItem, CollectType) onChangeType;
   final bool Function(BangumiItem) canEdit;
@@ -281,11 +284,15 @@ class _CollectLibraryViewState extends State<CollectLibraryView> {
               _selectType(_categories[index]);
             },
             itemCount: _categories.length,
-            itemBuilder: (context, index) => _scrollableContent(
-              query,
-              _categories[index],
-              textScale: textScale,
-              rightInset: 0,
+            itemBuilder: (context, index) => HeroMode(
+              // Avoid duplicate Hero tags across collection categories.
+              enabled: _categories[index] == _selectedType,
+              child: _scrollableContent(
+                query,
+                _categories[index],
+                textScale: textScale,
+                rightInset: 0,
+              ),
             ),
           ),
         ),
@@ -305,56 +312,51 @@ class _CollectLibraryViewState extends State<CollectLibraryView> {
     return LayoutBuilder(builder: (context, constraints) {
       final contentWidth = constraints.maxWidth - rightInset;
       final columns = contentWidth >= 840 && textScale <= 1.3 ? 2 : 1;
-      return Scrollbar(
+      return CustomScrollView(
+        key: PageStorageKey('collect-results-${type?.value ?? 'all'}'),
         controller: scrollController,
-        child: CustomScrollView(
-          key: PageStorageKey('collect-results-${type?.value ?? 'all'}'),
-          controller: scrollController,
-          scrollBehavior:
-              ScrollConfiguration.of(context).copyWith(scrollbars: false),
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          slivers: [
-            if (header != null) SliverToBoxAdapter(child: header),
-            if (entries.isEmpty)
-              SliverFillRemaining(
-                hasScrollBody: false,
-                child: _emptyState(query.count(null), type: type),
-              )
-            else
-              SliverPadding(
-                padding: EdgeInsets.only(
-                    bottom: 24 + MediaQuery.paddingOf(context).bottom),
-                sliver: SliverList.builder(
-                  itemCount: (entries.length + columns - 1) ~/ columns,
-                  itemBuilder: (context, index) {
-                    final first = index * columns;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(child: _card(entries[first])),
-                          if (columns == 2) ...[
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: first + 1 < entries.length
-                                  ? _card(entries[first + 1])
-                                  : const SizedBox(),
-                            ),
-                          ],
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        slivers: [
+          if (header != null) SliverToBoxAdapter(child: header),
+          if (entries.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _emptyState(query.count(null), type: type),
+            )
+          else
+            SliverPadding(
+              padding: EdgeInsets.only(
+                  bottom: 24 + MediaQuery.paddingOf(context).bottom),
+              sliver: SliverList.builder(
+                itemCount: (entries.length + columns - 1) ~/ columns,
+                itemBuilder: (context, index) {
+                  final first = index * columns;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: _card(entries[first])),
+                        if (columns == 2) ...[
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: first + 1 < entries.length
+                                ? _card(entries[first + 1])
+                                : const SizedBox(),
+                          ),
                         ],
-                      ),
-                    );
-                  },
-                ),
+                      ],
+                    ),
+                  );
+                },
               ),
-          ]
-              .map((sliver) => SliverPadding(
-                    padding: EdgeInsets.only(right: rightInset),
-                    sliver: sliver,
-                  ))
-              .toList(),
-        ),
+            ),
+        ]
+            .map((sliver) => SliverPadding(
+                  padding: EdgeInsets.only(right: rightInset),
+                  sliver: sliver,
+                ))
+            .toList(),
       );
     });
   }
@@ -362,6 +364,7 @@ class _CollectLibraryViewState extends State<CollectLibraryView> {
   Widget _card(CollectedBangumi entry) => _CollectLibraryCard(
         key: ValueKey('collect-${entry.bangumiItem.id}'),
         entry: entry,
+        showRating: widget.showRating,
         onOpen: () => widget.onOpen(entry.bangumiItem),
         onChangeType: widget.canEdit(entry.bangumiItem)
             ? (type) => widget.onChangeType(entry.bangumiItem, type)
@@ -497,8 +500,6 @@ class _CollectLibraryViewState extends State<CollectLibraryView> {
   }
 
   Widget _emptyState(int matchCount, {required CollectType? type}) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
     final searching = _query.trim().isNotEmpty;
     final String title;
 
@@ -516,35 +517,9 @@ class _CollectLibraryViewState extends State<CollectLibraryView> {
         _ => '还没有收藏的番剧',
       };
     }
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: colors.secondaryContainer,
-                borderRadius: BorderRadius.circular(32),
-              ),
-              child: Icon(
-                searching
-                    ? Icons.search_off_rounded
-                    : Icons.video_library_outlined,
-                size: 36,
-                color: colors.onSecondaryContainer,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(title,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w700)),
-          ],
-        ),
-      ),
+    return GeneralEmptyState(
+      icon: searching ? Icons.search_off_rounded : Icons.video_library_outlined,
+      title: title,
     );
   }
 }

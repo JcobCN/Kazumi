@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kazumi/bean/widget/empty_state_widget.dart';
+import 'package:kazumi/bean/widget/state_presentation.dart';
 import 'package:kazumi/modules/history/history_module.dart';
 import 'package:kazumi/pages/history/history_list_query.dart';
 
@@ -59,6 +61,17 @@ class _HistoryListViewState extends State<HistoryListView> {
     final colors = theme.colorScheme;
     final groups =
         groupHistoryEntries(widget.entries, query: _query, source: _source);
+    // Separate sliver delegates eagerly lay out the first card of every date.
+    final rows = <_HistoryListRow>[
+      for (final group in groups) ...[
+        _HistoryListRow(group),
+        for (var index = 0; index < group.entries.length; index++)
+          _HistoryListRow(group, entryIndex: index),
+      ],
+    ];
+    final rowIndices = <Key, int>{
+      for (var index = 0; index < rows.length; index++) rows[index].key: index,
+    };
     final count =
         groups.fold<int>(0, (total, group) => total + group.entries.length);
     final filtered =
@@ -84,7 +97,7 @@ class _HistoryListViewState extends State<HistoryListView> {
         autofocus: true,
         child: LayoutBuilder(builder: (context, constraints) {
           final contentWidth = constraints.maxWidth.clamp(0.0, 960.0);
-          // Keep the viewport full-width for edge scrollbars and gutter scrolling.
+          // Preserve full-width scrolling while centering the content.
           final inset = (constraints.maxWidth - contentWidth) / 2 +
               (constraints.maxWidth < 600 ? 16.0 : 24.0);
           return Scrollbar(
@@ -96,13 +109,13 @@ class _HistoryListViewState extends State<HistoryListView> {
                   ScrollConfiguration.of(context).copyWith(scrollbars: false),
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               slivers: [
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(inset, 16, inset, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (widget.entries.isNotEmpty || filtered) ...[
+                if (widget.entries.isNotEmpty || filtered)
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(inset, 16, inset, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           TextField(
                             controller: _searchController,
                             focusNode: _searchFocus,
@@ -156,71 +169,66 @@ class _HistoryListViewState extends State<HistoryListView> {
                             ),
                           ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
                 if (groups.isEmpty)
                   SliverFillRemaining(
                     hasScrollBody: false,
                     child: _emptyState(filtered),
-                  ),
-                for (final group in groups) ...[
+                  )
+                else
                   SliverPadding(
-                    padding: EdgeInsets.fromLTRB(inset + 4, 24, inset + 4, 12),
-                    sliver: SliverToBoxAdapter(
-                      child: Semantics(
-                        header: true,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(group.label(now),
-                                  style: theme.textTheme.titleLarge
-                                      ?.copyWith(fontWeight: FontWeight.w700)),
-                            ),
-                            Text('${group.entries.length} 条',
-                                style: theme.textTheme.labelLarge
-                                    ?.copyWith(color: colors.onSurfaceVariant)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  SliverPadding(
-                    padding: EdgeInsets.symmetric(horizontal: inset),
+                    padding: EdgeInsets.fromLTRB(inset, 0, inset,
+                        24 + MediaQuery.paddingOf(context).bottom),
                     sliver: SliverList.builder(
-                      itemCount: group.entries.length,
-                      findChildIndexCallback: (key) {
-                        if (key is! ValueKey<String>) return null;
-                        final index = group.entries
-                            .indexWhere((entry) => entry.key == key.value);
-                        return index < 0 ? null : index;
-                      },
-                      itemBuilder: (context, index) {
-                        final history = group.entries[index];
-                        final shape = BorderRadius.vertical(
-                          top: Radius.circular(index == 0 ? 24 : 4),
-                          bottom: Radius.circular(
-                              index == group.entries.length - 1 ? 24 : 4),
-                        );
-                        return Padding(
-                          key: ValueKey(history.key),
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: widget.itemBuilder(history, shape),
-                        );
-                      },
+                      itemCount: rows.length,
+                      findChildIndexCallback: (key) => rowIndices[key],
+                      itemBuilder: (context, index) =>
+                          _buildRow(context, rows[index], now),
                     ),
                   ),
-                ],
-                SliverPadding(
-                  padding: EdgeInsets.only(
-                      bottom: 24 + MediaQuery.paddingOf(context).bottom),
-                ),
               ],
             ),
           );
         }),
       ),
+    );
+  }
+
+  Widget _buildRow(BuildContext context, _HistoryListRow row, DateTime now) {
+    final group = row.group;
+    final entryIndex = row.entryIndex;
+    if (entryIndex == null) {
+      final theme = Theme.of(context);
+      return Padding(
+        key: row.key,
+        padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
+        child: Semantics(
+          header: true,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(group.label(now),
+                    style: theme.textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              Text('${group.entries.length} 条',
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            ],
+          ),
+        ),
+      );
+    }
+    final shape = BorderRadius.vertical(
+      top: Radius.circular(entryIndex == 0 ? 24 : 4),
+      bottom: Radius.circular(entryIndex == group.entries.length - 1 ? 24 : 4),
+    );
+    return Padding(
+      key: row.key,
+      padding: const EdgeInsets.only(bottom: 2),
+      child: widget.itemBuilder(group.entries[entryIndex], shape),
     );
   }
 
@@ -280,49 +288,30 @@ class _HistoryListViewState extends State<HistoryListView> {
   }
 
   Widget _emptyState(bool filtered) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: colors.secondaryContainer,
-                borderRadius: BorderRadius.circular(32),
-              ),
-              child: Icon(
-                filtered ? Icons.search_off_rounded : Icons.history_rounded,
-                size: 36,
-                color: colors.onSecondaryContainer,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(filtered ? '没有找到相关记录' : '还没有观看记录',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Text(
-              filtered ? '试试其他关键词，或查看全部记录' : '看过的番剧会留在这里，随时接着看',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: colors.onSurfaceVariant),
-            ),
-            if (filtered) ...[
-              const SizedBox(height: 20),
-              FilledButton.tonal(
-                onPressed: _resetFilters,
-                child: const Text('查看全部记录'),
-              ),
-            ],
-          ],
-        ),
-      ),
+    return GeneralEmptyState(
+      icon: filtered ? Icons.search_off_rounded : Icons.history_rounded,
+      title: filtered ? '没有找到相关记录' : '还没有观看记录',
+      actions: [
+        if (filtered)
+          StateActionButton.tonal(
+            onPressed: _resetFilters,
+            text: '查看全部记录',
+          ),
+      ],
     );
+  }
+}
+
+class _HistoryListRow {
+  const _HistoryListRow(this.group, {this.entryIndex});
+
+  final HistoryDateGroup group;
+  final int? entryIndex;
+
+  Key get key {
+    final index = entryIndex;
+    return index == null
+        ? ValueKey(group.date)
+        : ValueKey(group.entries[index].key);
   }
 }

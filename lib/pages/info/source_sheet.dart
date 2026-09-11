@@ -9,7 +9,9 @@ import 'package:flutter_modular/flutter_modular.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/bean/dialog/material_bottom_sheet.dart';
 import 'package:kazumi/bean/widget/loading_indicator.dart';
+import 'package:kazumi/bean/widget/empty_state_widget.dart';
 import 'package:kazumi/bean/widget/split_list_row.dart';
+import 'package:kazumi/bean/widget/state_presentation.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
 import 'package:kazumi/pages/collect/collect_controller.dart';
 import 'package:kazumi/pages/info/info_controller.dart';
@@ -40,7 +42,7 @@ class SourceSheet extends StatefulWidget {
   State<SourceSheet> createState() => _SourceSheetState();
 }
 
-class _SourceSheetState extends State<SourceSheet> {
+class _SourceSheetState extends State<SourceSheet> with KazumiDialogOwner {
   final CollectController _collectController = inject<CollectController>();
   final PluginsController _pluginsController = inject<PluginsController>();
   final Map<String, String> _sourceKeywords = {};
@@ -49,7 +51,6 @@ class _SourceSheetState extends State<SourceSheet> {
   late final List<String> _candidates;
   late final PluginSearchService _searchService;
   late final _SourceCaptchaFlow _captchaFlow;
-  RuleCancelToken? _chapterCancelToken;
 
   @override
   void initState() {
@@ -74,7 +75,6 @@ class _SourceSheetState extends State<SourceSheet> {
 
   @override
   void dispose() {
-    _chapterCancelToken?.cancel();
     _searchService.cancel();
     _captchaFlow.dispose();
     super.dispose();
@@ -133,22 +133,18 @@ class _SourceSheetState extends State<SourceSheet> {
   }
 
   Future<void> _openSearchItem(String name, SearchItem searchItem) async {
-    if (_chapterCancelToken != null) return;
+    if (dialogs.isRunning) return;
     final plugin = _pluginFor(name);
-    final cancelToken = _chapterCancelToken = RuleCancelToken();
-    KazumiDialog.showLoading(
-      msg: '正在获取播放列表',
-      barrierDismissible: isDesktop(),
-      onDismiss: cancelToken.cancel,
-    );
-    try {
-      final roads = await plugin.queryChapterRoads(
-        searchItem.src,
-        cancelToken: cancelToken,
+    await dialogs.run((task) async {
+      final cancelToken = RuleCancelToken();
+      final roads = await task.loading(
+        message: '正在获取播放列表',
+        barrierDismissible: isDesktop(),
+        onCancel: cancelToken.cancel,
+        action: () =>
+            plugin.queryChapterRoads(searchItem.src, cancelToken: cancelToken),
       );
-      if (!mounted || cancelToken.isCancelled) return;
       if (roads.isEmpty) throw ChapterErrorException(plugin.name);
-      KazumiDialog.dismiss();
 
       final playbackBangumiItem = AnimeTitleHelper.resolvePlaybackBangumiItem(
         currentBangumiItem: widget.infoController.bangumiItem,
@@ -156,24 +152,20 @@ class _SourceSheetState extends State<SourceSheet> {
         searchTitle: searchItem.name,
       );
 
-      context.pushNamed(
-        '/video/',
-        arguments: OnlineVideoPlaybackArgs(
-          bangumiItem: playbackBangumiItem,
-          plugin: plugin,
-          title: searchItem.name,
-          src: searchItem.src,
-          roads: roads,
-        ),
-      );
-    } catch (error) {
-      if (!mounted || cancelToken.isCancelled) return;
+      task.withContext((context) => context.pushNamed(
+            '/video/',
+            arguments: OnlineVideoPlaybackArgs(
+              bangumiItem: playbackBangumiItem,
+              plugin: plugin,
+              title: searchItem.name,
+              src: searchItem.src,
+              roads: roads,
+            ),
+          ));
+    }, onError: (error, stackTrace) {
       KazumiLogger().w('SourceSheet: failed to query playlist', error: error);
-      KazumiDialog.dismiss();
       KazumiDialog.showToast(message: '未能获取播放列表，请重试或选择其他结果');
-    } finally {
-      _chapterCancelToken = null;
-    }
+    });
   }
 
   void _showAliasPicker(String pluginName) {

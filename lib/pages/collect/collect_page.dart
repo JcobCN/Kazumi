@@ -6,12 +6,14 @@ import 'package:flutter_modular/flutter_modular.dart';
 
 import 'package:kazumi/bean/appbar/sys_app_bar.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
-import 'package:kazumi/bean/widget/loading_indicator.dart';
+import 'package:kazumi/bean/widget/state_presentation.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
+import 'package:kazumi/modules/bangumi/sync_priority.dart';
 import 'package:kazumi/modules/collect/collect_sync_plan.dart';
 import 'package:kazumi/modules/collect/collect_type.dart';
 import 'package:kazumi/pages/collect/collect_controller.dart';
 import 'package:kazumi/pages/collect/collect_library_view.dart';
+import 'package:kazumi/pages/collect/collect_sync_dialog.dart';
 import 'package:kazumi/services/storage/storage.dart';
 
 class CollectPage extends StatefulWidget {
@@ -26,84 +28,28 @@ class CollectPage extends StatefulWidget {
   State<CollectPage> createState() => _CollectPageState();
 }
 
-class _CollectPageState extends State<CollectPage> {
+class _CollectPageState extends State<CollectPage> with KazumiDialogOwner {
   CollectController get collectController => widget.controller;
-  bool _syncing = false;
+  bool get _syncDialogOpen => dialogs.isRunning;
   final Set<int> _pendingIds = {};
 
-  Future<void> _runFullSync({
-    required CollectSyncPlan plan,
-  }) async {
-    final progressDialogKey = GlobalKey<_FullSyncProgressDialogState>();
-
-    unawaited(KazumiDialog.show(
-      context: context,
-      clickMaskDismiss: false,
-      builder: (context) => _FullSyncProgressDialog(key: progressDialogKey),
-    ));
-    await WidgetsBinding.instance.endOfFrame;
-    bool webDavSynced = false;
-    bool bangumiSynced = false;
-    bool webDavUploaded = false;
-
-    try {
-      if (plan.shouldSyncWebDavCollectibles) {
-        progressDialogKey.currentState?.update('正在同步 WebDav 收藏...', null);
-        webDavSynced =
-            await collectController.syncCollectibles(showSuccessToast: false);
-      }
-
-      if (plan.shouldSyncBangumi) {
-        progressDialogKey.currentState?.update('准备同步 Bangumi 收藏...', null);
-        bangumiSynced = await collectController.syncCollectiblesBangumi(
-          showSuccessToast: false,
-          onProgress: (message, current, total) {
-            progressDialogKey.currentState?.update(
-              total > 0 ? '$message ($current/$total)' : message,
-              total > 0 ? (current / total).clamp(0.0, 1.0).toDouble() : null,
-            );
-          },
-        );
-      }
-
-      if (plan.shouldUploadWebDavAfterBangumi(
-        webDavSynced: webDavSynced,
-        bangumiSynced: bangumiSynced,
-      )) {
-        progressDialogKey.currentState?.update('正在回传最新收藏到 WebDav...', null);
-        webDavUploaded = await collectController.uploadCollectiblesToWebDav(
-          showSuccessToast: false,
-        );
-      }
-    } finally {
-      final dialogContext = progressDialogKey.currentContext;
-      if (dialogContext != null && dialogContext.mounted) {
-        final route = ModalRoute.of(dialogContext);
-        if (route != null) {
-          final navigator = Navigator.of(dialogContext);
-          if (route.isCurrent) {
-            navigator.pop();
-          } else {
-            navigator.removeRoute(route);
-          }
-          // The route observer clears stale snackbars at the end of the frame.
-          await WidgetsBinding.instance.endOfFrame;
-        }
-      }
-    }
-
-    final states = [
-      if (plan.shouldSyncWebDavCollectibles)
-        webDavSynced ? 'WebDav 已同步' : 'WebDav 未完成',
-      if (plan.shouldSyncBangumi) bangumiSynced ? 'Bangumi 已同步' : 'Bangumi 未完成',
-      if (plan.shouldUploadWebDavAfterBangumi(
-        webDavSynced: webDavSynced,
-        bangumiSynced: bangumiSynced,
-      ))
-        webDavUploaded ? 'WebDav 已回传最新数据' : 'WebDav 未回传最新数据',
-    ];
-    KazumiDialog.showToast(message: states.join('，'));
-  }
+  Future<bool> _syncStep(
+    CollectSyncStep step, {
+    required ValueChanged<String> onError,
+    required void Function(String message, int current, int total) onProgress,
+  }) =>
+      switch (step) {
+        CollectSyncStep.webDav => collectController.syncCollectibles(
+            onError: onError,
+          ),
+        CollectSyncStep.bangumi => collectController.syncCollectiblesBangumi(
+            onError: onError,
+            onProgress: onProgress,
+          ),
+        CollectSyncStep.upload => collectController.uploadCollectiblesToWebDav(
+            onError: onError,
+          ),
+      };
 
   @override
   void initState() {
@@ -112,7 +58,7 @@ class _CollectPageState extends State<CollectPage> {
   }
 
   Future<void> _changeType(BangumiItem item, CollectType type) async {
-    if (_syncing || _pendingIds.contains(item.id)) return;
+    if (_syncDialogOpen || _pendingIds.contains(item.id)) return;
     setState(() => _pendingIds.add(item.id));
     try {
       await collectController.addCollect(item, type: type.value);
@@ -124,30 +70,32 @@ class _CollectPageState extends State<CollectPage> {
   }
 
   Future<void> _sync() async {
-    if (_syncing || _pendingIds.isNotEmpty) return;
+    if (_syncDialogOpen || _pendingIds.isNotEmpty) return;
     final plan = CollectSyncPlan(
       webDavEnabled: GStorage.getSetting(SettingsKeys.webDavEnable),
       webDavCollectiblesEnabled:
           GStorage.getSetting(SettingsKeys.webDavEnableCollect),
       bangumiEnabled: GStorage.getSetting(SettingsKeys.bangumiSyncEnable),
     );
-    if (!plan.canSync) {
-      KazumiDialog.showToast(message: '同步功能不可用，请至少开启一个同步功能');
-      return;
-    }
-    setState(() => _syncing = true);
-    try {
-      await _runFullSync(plan: plan);
-    } catch (_) {
-      KazumiDialog.showToast(message: '同步未完成，请稍后重试');
-    } finally {
-      if (mounted) setState(() => _syncing = false);
-    }
+    await dialogs.run((task) async {
+      final destination = await task.show<CollectSyncDestination>(
+        builder: (_) => CollectSyncDialog(
+          plan: plan,
+          priority: BangumiSyncPriority.fromValue(
+            GStorage.getSetting(SettingsKeys.bangumiSyncPriority),
+          ),
+          onSync: _syncStep,
+        ),
+      );
+      task.withContext((context) => context.pushNamed(switch (destination) {
+            CollectSyncDestination.webDavSettings => '/settings/webdav/',
+            CollectSyncDestination.bangumiSettings => '/settings/bangumi/',
+          }));
+    }, errorMessage: '同步未完成，请稍后重试');
   }
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: SysAppBar(
         needTopOffset: false,
@@ -162,16 +110,14 @@ class _CollectPageState extends State<CollectPage> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: IconButton.filledTonal(
-              tooltip: _syncing ? '正在同步收藏' : '同步收藏',
-              onPressed: _syncing || _pendingIds.isNotEmpty ? null : _sync,
-              icon: _syncing
-                  ? LoadingIndicator(
-                      size: 24,
-                      color: colors.onSecondaryContainer,
-                      semanticsLabel: '正在同步收藏',
-                    )
-                  : const Icon(Icons.sync_rounded),
+            child: Tooltip(
+              message: '同步收藏',
+              child: StateActionButton.tonal(
+                text: '同步',
+                onPressed:
+                    _syncDialogOpen || _pendingIds.isNotEmpty ? null : _sync,
+                icon: Icons.sync_rounded,
+              ),
             ),
           ),
         ],
@@ -182,62 +128,11 @@ class _CollectPageState extends State<CollectPage> {
         child: Observer(
           builder: (context) => CollectLibraryView(
             entries: collectController.collectibles.toList(),
-            canEdit: (item) => !_syncing && !_pendingIds.contains(item.id),
+            showRating: GStorage.getSetting(SettingsKeys.showRating),
+            canEdit: (item) =>
+                !_syncDialogOpen && !_pendingIds.contains(item.id),
             onOpen: (item) => context.pushNamed('/info/', arguments: item),
             onChangeType: (item, type) => unawaited(_changeType(item, type)),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FullSyncProgressDialog extends StatefulWidget {
-  const _FullSyncProgressDialog({super.key});
-
-  @override
-  State<_FullSyncProgressDialog> createState() =>
-      _FullSyncProgressDialogState();
-}
-
-class _FullSyncProgressDialogState extends State<_FullSyncProgressDialog> {
-  String _progressText = '准备开始同步收藏...';
-  double? _progressValue;
-
-  void update(String text, double? value) {
-    if (!mounted) return;
-    setState(() {
-      _progressText = text;
-      _progressValue = value;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      child: Dialog(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: SizedBox(
-            width: 340,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '收藏全量同步中',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(_progressText),
-                const SizedBox(height: 12),
-                LinearProgressIndicator(value: _progressValue),
-              ],
-            ),
           ),
         ),
       ),
