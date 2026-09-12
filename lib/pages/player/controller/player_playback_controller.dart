@@ -464,7 +464,7 @@ abstract class _PlayerPlaybackController with Store {
       // HLS 源经由本地代理并行获取分片，绕过 CDN 单连接限速；非 HLS
       // 源或代理初始化失败时回退为原始 URL，外部播放器/投屏等场景仍
       // 使用原始地址。
-      final String playbackUrl = await HlsProxy.instance.resolvePlaybackUrl(
+      final hlsProxyResult = await HlsProxy.instance.resolvePlaybackUrl(
         videoUrl(),
         httpHeaders,
         adBlockerEnabled: adBlockerEnabled,
@@ -472,9 +472,14 @@ abstract class _PlayerPlaybackController with Store {
       if (!isCurrentPlayer(player)) {
         return await _discardIfNotCurrent(candidate);
       }
+      if (hlsProxyResult.status == HlsProxyStatus.fallback) {
+        KazumiDialog.showToast(
+          message: 'HLS 代理不可用（${hlsProxyResult.reason}），已回退为直接播放',
+        );
+      }
 
       await player.open(
-        Media(playbackUrl,
+        Media(hlsProxyResult.url,
             start: Duration(seconds: offset), httpHeaders: httpHeaders),
         play: autoPlay,
       );

@@ -14,6 +14,38 @@ import 'package:kazumi/utils/m3u8_ad_filter.dart';
 import 'package:kazumi/utils/m3u8_parser.dart';
 import 'package:path/path.dart' as path;
 
+/// 一次 [HlsProxy.resolvePlaybackUrl] 的结果状态。
+enum HlsProxyStatus {
+  /// 代理已生效，播放器应打开本地代理 URL。
+  proxied,
+
+  /// 设置中已禁用代理，直接播放原始 URL。
+  disabled,
+
+  /// 源不是 HLS（非 http(s) 或直接媒体文件扩展名），不适用。
+  notApplicable,
+
+  /// 代理初始化失败，已回退为直接播放原始 URL。
+  fallback,
+}
+
+/// [HlsProxy.resolvePlaybackUrl] 的返回值。
+class HlsProxyResult {
+  const HlsProxyResult(
+    this.url,
+    this.status, {
+    this.reason,
+  });
+
+  /// 播放器应打开的 URL。
+  final String url;
+
+  final HlsProxyStatus status;
+
+  /// 回退原因的可读描述，仅 [HlsProxyStatus.fallback] 时非空。
+  final String? reason;
+}
+
 /// 本地 HLS 代理。
 ///
 /// ffmpeg/mpv 的 HLS demuxer 一次只用单个连接串行拉取分片，遇到 CDN
@@ -35,20 +67,20 @@ class HlsProxy {
 
   /// 返回播放器应打开的 URL：代理 URL，或禁用/不适用/初始化失败时的
   /// 原始 URL。
-  Future<String> resolvePlaybackUrl(
+  Future<HlsProxyResult> resolvePlaybackUrl(
     String url,
     Map<String, String> httpHeaders, {
     required bool adBlockerEnabled,
   }) async {
     if (!GStorage.getSetting<bool>(SettingsKeys.hlsProxyEnabled)) {
-      return url;
+      return HlsProxyResult(url, HlsProxyStatus.disabled);
     }
     final uri = Uri.tryParse(url);
     if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
-      return url;
+      return HlsProxyResult(url, HlsProxyStatus.notApplicable);
     }
     if (_hasDirectMediaExtension(uri.path)) {
-      return url;
+      return HlsProxyResult(url, HlsProxyStatus.notApplicable);
     }
 
     await stop();
@@ -65,15 +97,37 @@ class HlsProxy {
         'HlsProxy: proxying ${session.segments.length} segments at '
         '${session.indexUrl}',
       );
-      return session.indexUrl;
+      return HlsProxyResult(session.indexUrl, HlsProxyStatus.proxied);
     } catch (e, stackTrace) {
       KazumiLogger().w(
         'HlsProxy: unavailable, falling back to direct playback',
         error: e,
         stackTrace: stackTrace,
       );
-      return url;
+      return HlsProxyResult(
+        url,
+        HlsProxyStatus.fallback,
+        reason: _describeFallbackReason(e),
+      );
     }
+  }
+
+  /// 将回退原因转为面向用户的简短描述。
+  static String _describeFallbackReason(Object e) {
+    if (e is _UnsupportedPlaylistException) {
+      switch (e.reason) {
+        case 'fMP4/BYTERANGE':
+          return '播放列表为 fMP4/BYTERANGE 格式';
+        case 'live stream':
+          return '直播流暂不支持';
+        case 'no segments':
+          return '播放列表中没有有效分片';
+      }
+    }
+    if (e is _NotPlaylistException) {
+      return '无法获取有效的播放列表';
+    }
+    return '初始化失败';
   }
 
   /// 结束当前会话（如有）并清理其缓存目录。
