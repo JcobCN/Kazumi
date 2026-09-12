@@ -1,29 +1,22 @@
-# PP-OCRv6 tiny captcha OCR models
+# ddddocr captcha OCR model
 
-Baidu PaddleOCR **PP-OCRv6 tiny** detection + recognition models, converted to
-ONNX by the PaddleOCR team, plus the character dictionary.
+The **ddddocr** captcha classification model (MIT license,
+https://github.com/sml2h3/ddddocr), trained specifically on distorted captcha
+glyphs. Replaces the previous PP-OCRv6 tiny det+rec pair, which is a
+general-purpose print-text OCR and misreads twisted captcha characters.
 
 ## Files
 
 | File | Size | Description |
 |------|------|-------------|
-| `det.onnx` | ~1.8 MB | DBNet text detection (0.43M params) |
-| `rec.onnx` | ~4.5 MB | SVTR text recognition + CTC head (1.1M params) |
-| `ppocrv6_tiny_dict.txt` | 27 KB | 6905-char dictionary (`["blank"] + chars + " "`) |
-
-## Source
-
-- `det.onnx`: https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx
-- `rec.onnx`: https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx
-
-License: **Apache-2.0** (Baidu PaddleOCR, https://github.com/PaddlePaddle/PaddleOCR)
+| `ddddocr.onnx` | ~13.6 MB | Captcha classification model (CTC head) |
+| `ddddocr_charset.json` | 57 KB | 8210-entry charset; index 0 = blank |
 
 ## Preprocessing contract
 
-- **det**: input `[1,3,H,W]` float; ImageNet normalization `(x/255 - mean)/std`
-  with `mean=[0.485,0.456,0.406]`, `std=[0.229,0.224,0.225]`; long side capped
-  at 736; output `[1,1,H,W]` probability map (DBPostProcess box_thresh=0.4,
-  unclip_ratio=1.5).
-- **rec**: input `[1,3,48,W]` float; normalization `(x/255 - 0.5)/0.5`
-  ([-1,1]); width padded to a multiple of 16 with black; output
-  `[1,seq_len,6906]` CTC logits; greedy decode with blank=0, char k -> dict[k-1].
+- Input `input1`: `[1,1,64,W]` float, grayscale, `x/255` in [0,1].
+- Height fixed to 64; width = `int(w * 64 / h)` (aspect preserved, truncated).
+- Output: `[26,1,8210]` CTC logits; greedy decode with blank = index 0.
+- Captcha charsets are alphanumeric in practice: when a decoded step's best
+  character is not `[0-9a-zA-Z]`, fall back to that step's best alphanumeric
+  character instead of dropping the position.

@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -8,36 +8,32 @@ import 'package:image/image.dart' as image;
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
-/// Captcha OCR backed by Baidu PaddleOCR PP-OCRv6 tiny models running through
-/// the ONNX Runtime Flutter plugin (C++ inference engine, dart:ffi bindings).
+/// Captcha OCR backed by the ddddocr model (MIT) running through the ONNX
+/// Runtime Flutter plugin (C++ inference engine, dart:ffi bindings).
+///
+/// ddddocr is trained specifically on distorted captcha glyphs, so it handles
+/// twisted/overlapping characters that defeat general-purpose print-text OCR
+/// models.
 class CaptchaOcrService {
-  static const String _detModelPath = 'assets/ocr/det.onnx';
-  static const String _recModelPath = 'assets/ocr/rec.onnx';
-  static const String _dictPath = 'assets/ocr/ppocrv6_tiny_dict.txt';
+  static const String _modelPath = 'assets/ocr/ddddocr.onnx';
+  static const String _charsetPath = 'assets/ocr/ddddocr_charset.json';
 
-  // det: PP-OCRv6 tiny det (DBNet). Input NCHW float [N,3,H,W], normalized
-  // with ImageNet mean/std after scaling to [0,1]. Long side limited to 736.
-  static const int _detLimitSideLen = 736;
-  static const double _detBoxThresh = 0.4;
-  static const double _detUnclipRatio = 1.5;
+  // Input: NCHW float [1,1,64,W], grayscale, x/255 in [0,1]. Height is fixed
+  // to 64; width preserves the aspect ratio (truncated, like ddddocr).
+  static const int _inputHeight = 64;
 
-  // rec: PP-OCRv6 tiny rec (SVTR + CTC). Input NCHW float [N,3,48,W],
-  // normalized to [-1,1] as (x/255 - 0.5)/0.5, padded to a multiple of 16.
-  static const int _recHeight = 48;
-
+  // Output: [26,1,8210] CTC logits over the charset; index 0 is blank.
   static bool get isSupported => !kIsWeb;
 
   static OrtEnv? _env;
-  static OrtSession? _detSession;
-  static OrtSession? _recSession;
-  static List<String>? _dict;
+  static OrtSession? _session;
+  static List<String>? _charset;
   static Future<void>? _initFuture;
   static Future<void> _inferenceLock = Future.value();
 
-  /// Serializes all det/rec inference. The onnxruntime plugin's runAsync
-  /// multiplexes every session through a single broadcast-stream isolate
-  /// without request/response pairing, so concurrent calls would consume the
-  /// same first result. A simple chained future keeps them strictly ordered.
+  /// Serializes all inference. The onnxruntime plugin's runAsync
+  /// implementations share native state per session, so concurrent calls can
+  /// interleave; a simple chained future keeps them strictly ordered.
   static Future<T> _serialized<T>(Future<T> Function() action) {
     final result = _inferenceLock.then((_) => action());
     _inferenceLock = result.then((_) {}, onError: (_) {});
@@ -53,26 +49,22 @@ class CaptchaOcrService {
     }
   }
 
-  static Object? _firstOutputValue(List<OrtValue?>? outputs) {
-    if (outputs == null || outputs.isEmpty) return null;
-    final first = outputs.firstWhere((o) => o != null, orElse: () => null);
-    return first?.value;
-  }
-
   static Future<void> _init() async {
     _env ??= OrtEnv.instance;
     _env!.init();
 
-    final detBytes = (await rootBundle.load(_detModelPath)).buffer.asUint8List();
-    final recBytes = (await rootBundle.load(_recModelPath)).buffer.asUint8List();
-    final dictRaw = await rootBundle.loadString(_dictPath);
-    _dict = dictRaw.split('\n').where((s) => s.isNotEmpty).toList();
+    final modelBytes = (await rootBundle.load(_modelPath)).buffer.asUint8List();
+    final charsetRaw = await rootBundle.loadString(_charsetPath);
+    final decoded = jsonDecode(charsetRaw);
+    if (decoded is! List) {
+      throw StateError('ddddocr charset is not a JSON list');
+    }
+    _charset = decoded.map((e) => e.toString()).toList();
 
-    _detSession = OrtSession.fromBuffer(detBytes, OrtSessionOptions());
-    _recSession = OrtSession.fromBuffer(recBytes, OrtSessionOptions());
+    _session = OrtSession.fromBuffer(modelBytes, OrtSessionOptions());
     KazumiLogger().i(
-        '[CaptchaOcr] PP-OCRv6 tiny loaded (dict=${_dict!.length}, '
-        'det=${detBytes.length ~/ 1024}KB, rec=${recBytes.length ~/ 1024}KB)');
+        '[CaptchaOcr] ddddocr loaded (dict=${_charset!.length}, '
+        'model=${modelBytes.length ~/ 1024}KB)');
   }
 
   /// Recognize captcha text from a base64 data URL. Returns the decoded text
@@ -92,370 +84,178 @@ class CaptchaOcrService {
 
       await _ensureInit();
 
-      final boxes = await _detectText(decoded);
-      if (boxes.isEmpty) {
-        KazumiLogger().w('[CaptchaOcr] No text region detected');
-        return null;
-      }
-
-      final results = <String>[];
-      for (final box in boxes) {
-        final text = await _recognizeLine(decoded, box);
-        if (text.isNotEmpty) results.add(text);
-      }
-
-      final joined = results.join().replaceAll(RegExp(r'\s+'), '').trim();
-      KazumiLogger().i('[CaptchaOcr] PP-OCRv6 result: $joined');
-      return joined.isEmpty ? null : joined;
+      final text = await _classify(decoded);
+      KazumiLogger().i('[CaptchaOcr] ddddocr result: $text');
+      return text.isEmpty ? null : text;
     } catch (e, st) {
       KazumiLogger().w('[CaptchaOcr] OCR failed: $e\n$st');
       return null;
     }
   }
 
-  static Future<List<Box>> _detectText(image.Image img) async {
-    final detSession = _detSession;
-    if (detSession == null) return const [];
+  static Future<String> _classify(image.Image img) async {
+    final session = _session;
+    final charset = _charset;
+    if (session == null || charset == null) return '';
 
-    final (resized, ratioW, ratioH) = _resizeDet(img);
-    final tensor = _imageToDetNchw(resized);
-
-    final inputShape = [1, 3, resized.height, resized.width];
-    final inputOrt =
-        OrtValueTensor.createTensorWithDataList(tensor, inputShape);
-    final runOptions = OrtRunOptions();
-    List<OrtValue?>? outputs;
-    try {
-      outputs = await detSession.runAsync(runOptions, {'x': inputOrt});
-      final det = _firstOutputValue(outputs);
-      // reshape[1,1,H,W] => det[0][0] is HxW probability map.
-      final probMap = det is List && det.isNotEmpty && det[0] is List
-          ? det[0][0]
-          : null;
-      if (probMap is! List || probMap.isEmpty) return const [];
-
-      final mask = _probabilityToMask(probMap, resized.width, resized.height);
-      final boxes = _findTextBoxes(mask);
-      // Boxes are in resized coordinates; ratioW/ratioH are
-      // originalSize / resizedSize, so multiply to map back.
-      return boxes
-          .map((b) => Box(
-                x1: b.x1 * ratioW,
-                y1: b.y1 * ratioH,
-                x2: b.x2 * ratioW,
-                y2: b.y2 * ratioH,
-              ))
-          .toList();
-    } finally {
-      for (final o in outputs ?? const <OrtValue?>[]) {
-        o?.release();
-      }
-      inputOrt.release();
-      runOptions.release();
-    }
-  }
-
-  static (image.Image, double, double) _resizeDet(image.Image img) {
-    final w = img.width;
-    final h = img.height;
-    final scale = _detLimitSideLen / math.max(w, h);
-    var resizeW = (w * scale).round();
-    var resizeH = (h * scale).round();
-    // DBNet needs both H and W to be multiples of 32; round up to the next
-    // multiple so the model's down/up-sampling tensors line up.
-    resizeW = ((resizeW + 31) ~/ 32) * 32;
-    resizeH = ((resizeH + 31) ~/ 32) * 32;
+    final w = (img.width * (_inputHeight / img.height)).toInt();
+    if (w < 1) return '';
     final resized = image.copyResize(
       img,
-      width: resizeW,
-      height: resizeH,
-      interpolation: image.Interpolation.linear,
-    );
-    return (resized, w / resizeW, h / resizeH);
-  }
-
-  /// DBNet preprocess: scale to [0,1] then ImageNet normalization, NCHW.
-  static Float32List _imageToDetNchw(image.Image img) {
-    const mean = [0.485, 0.456, 0.406];
-    const std = [0.229, 0.224, 0.225];
-    final w = img.width;
-    final h = img.height;
-    final out = Float32List(3 * h * w);
-    var idx = 0;
-    final data = img.getBytes(order: image.ChannelOrder.rgba);
-    for (var y = 0; y < h; y++) {
-      var row = y * w * 4;
-      for (var x = 0; x < w; x++) {
-        out[idx] = (data[row] / 255.0 - mean[0]) / std[0];
-        out[idx + h * w] = (data[row + 1] / 255.0 - mean[1]) / std[1];
-        out[idx + 2 * h * w] = (data[row + 2] / 255.0 - mean[2]) / std[2];
-        idx++;
-        row += 4;
-      }
-    }
-    return out;
-  }
-
-  /// Rec preprocess: (x/255 - 0.5)/0.5 -> [-1,1], NCHW.
-  static Float32List _imageToRecNchw(image.Image img) {
-    final w = img.width;
-    final h = img.height;
-    final out = Float32List(3 * h * w);
-    var idx = 0;
-    final data = img.getBytes(order: image.ChannelOrder.rgba);
-    for (var y = 0; y < h; y++) {
-      var row = y * w * 4;
-      for (var x = 0; x < w; x++) {
-        out[idx] = (data[row] / 255.0 - 0.5) / 0.5;
-        out[idx + h * w] = (data[row + 1] / 255.0 - 0.5) / 0.5;
-        out[idx + 2 * h * w] = (data[row + 2] / 255.0 - 0.5) / 0.5;
-        idx++;
-        row += 4;
-      }
-    }
-    return out;
-  }
-
-  /// det output is [1,1,H,W] flattened into a List<List<double>> by the
-  /// plugin's reshape; flatten and index in H*W order.
-  static List<List<double>> _probabilityToMask(
-      List probMap, int width, int height) {
-    final flat = <double>[];
-    void walk(List list) {
-      for (final e in list) {
-        if (e is List) {
-          walk(e);
-        } else if (e is num) {
-          flat.add(e.toDouble());
-        }
-      }
-    }
-
-    walk(probMap);
-    if (flat.length < width * height) return const [];
-    return List.generate(
-      height,
-      (y) => List.generate(width, (x) => flat[y * width + x]),
-      growable: false,
-    );
-  }
-
-  static List<_BoxQuad> _findTextBoxes(List<List<double>> mask) {
-    final height = mask.length;
-    final width = mask[0].length;
-    final visited =
-        List.generate(height, (_) => List.filled(width, false), growable: false);
-    final boxes = <_BoxQuad>[];
-
-    final stack = <(int, int)>[];
-    for (var y = 0; y < height; y++) {
-      for (var x = 0; x < width; x++) {
-        if (visited[y][x] || mask[y][x] <= _detBoxThresh) continue;
-        visited[y][x] = true;
-        stack.add((x, y));
-        var minX = x, maxX = x, minY = y, maxY = y;
-        while (stack.isNotEmpty) {
-          final (cx, cy) = stack.removeLast();
-          if (cx < minX) minX = cx;
-          if (cx > maxX) maxX = cx;
-          if (cy < minY) minY = cy;
-          if (cy > maxY) maxY = cy;
-          for (final (dx, dy) in const [
-            (-1, 0), (1, 0), (0, -1), (0, 1),
-            (-1, -1), (-1, 1), (1, -1), (1, 1),
-          ]) {
-            final nx = cx + dx;
-            final ny = cy + dy;
-            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-            if (visited[ny][nx] || mask[ny][nx] <= _detBoxThresh) continue;
-            visited[ny][nx] = true;
-            stack.add((nx, ny));
-          }
-        }
-        final boxW = (maxX - minX + 1).toDouble();
-        final boxH = (maxY - minY + 1).toDouble();
-        if (boxW < 2 || boxH < 2) continue;
-        // Rough DBNet unclip: expand the axis-aligned box by the unclip ratio.
-        final padX = (boxW * (_detUnclipRatio - 1) / 2).clamp(1.0, boxW);
-        final padY = (boxH * (_detUnclipRatio - 1) / 2).clamp(1.0, boxH);
-        boxes.add(_BoxQuad(
-          x1: math.max(0, minX - padX),
-          y1: math.max(0, minY - padY),
-          x2: math.min(width - 1, maxX + padX),
-          y2: math.min(height - 1, maxY + padY),
-        ));
-      }
-    }
-    // Sort top-to-bottom then left-to-right for reading order.
-    boxes.sort((a, b) {
-      final byY = a.y1.compareTo(b.y1);
-      return byY != 0 ? byY : a.x1.compareTo(b.x1);
-    });
-    // Drop redundant fragments: a box mostly inside another box (either
-    // direction) decodes to a duplicate or junk, since captcha strokes
-    // inside a detected text region are already covered by the larger box.
-    final kept = <_BoxQuad>[];
-    for (final b in boxes) {
-      var drop = false;
-      final survivors = <_BoxQuad>[];
-      for (final k in kept) {
-        final iw = math.min(b.x2, k.x2) - math.max(b.x1, k.x1);
-        final ih = math.min(b.y2, k.y2) - math.max(b.y1, k.y1);
-        if (iw <= 0 || ih <= 0) {
-          survivors.add(k);
-          continue;
-        }
-        final inter = iw * ih;
-        final areaB = math.max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1));
-        final areaK = math.max(1.0, (k.x2 - k.x1) * (k.y2 - k.y1));
-        if (inter / areaB > 0.5) {
-          drop = true;
-          break;
-        }
-        if (inter / areaK <= 0.5) survivors.add(k);
-      }
-      if (!drop) {
-        kept
-          ..clear()
-          ..addAll(survivors)
-          ..add(b);
-      }
-    }
-    return kept;
-  }
-
-  static Future<String> _recognizeLine(image.Image img, Box box) async {
-    final recSession = _recSession;
-    final dict = _dict;
-    if (recSession == null || dict == null) return '';
-
-    final crop = _cropBox(img, box);
-    if (crop == null) return '';
-
-    // resize_norm_img_chinese: keep aspect ratio, height fixed to 48. Width
-    // is 48*ratio (no truncation) so long lines stay undistorted.
-    final h = crop.height;
-    final w = crop.width;
-    final ratio = w / h;
-    final resizeW = (48 * ratio).ceil();
-    final resized = image.copyResize(
-      crop,
-      width: resizeW,
-      height: _recHeight,
-      interpolation: image.Interpolation.linear,
-    );
-
-    // Pad width to a multiple of 16 with black (0) as PaddleOCR does.
-    final paddedW = ((resizeW + 15) ~/ 16) * 16;
-    final tensorInput = paddedW == resizeW
-        ? resized
-        : image.copyExpandCanvas(
-            resized,
-            newWidth: paddedW,
-            newHeight: _recHeight,
-            position: image.ExpandCanvasPosition.topLeft,
-            backgroundColor: image.ColorRgb8(0, 0, 0),
-          );
-
-    final tensor = _imageToRecNchw(tensorInput);
-    final inputShape = [1, 3, _recHeight, paddedW];
-    final inputOrt =
-        OrtValueTensor.createTensorWithDataList(tensor, inputShape);
-    final runOptions = OrtRunOptions();
-    List<OrtValue?>? outputs;
-    try {
-      outputs = await recSession.runAsync(runOptions, {'x': inputOrt});
-      final rec = _firstOutputValue(outputs);
-      // reshape[1, seq_len, classes] => rec[0] is List<List<double>>.
-      if (rec is! List || rec.isEmpty || rec[0] is! List) return '';
-      return _ctcDecode(rec[0], dict);
-    } finally {
-      for (final o in outputs ?? const <OrtValue?>[]) {
-        o?.release();
-      }
-      inputOrt.release();
-      runOptions.release();
-    }
-  }
-
-  static image.Image? _cropBox(image.Image img, Box box) {
-    final x1 = box.x1.round().clamp(0, img.width - 1);
-    final y1 = box.y1.round().clamp(0, img.height - 1);
-    final x2 = box.x2.round().clamp(x1, img.width - 1);
-    final y2 = box.y2.round().clamp(y1, img.height - 1);
-    final w = x2 - x1 + 1;
-    final h = y2 - y1 + 1;
-    if (w <= 0 || h <= 0) return null;
-    return image.copyCrop(
-      img,
-      x: x1,
-      y: y1,
       width: w,
-      height: h,
+      height: _inputHeight,
+      interpolation: image.Interpolation.linear,
     );
+
+    // ITU-R 601-2 luma, matching PIL's convert('L').
+    final out = Float32List(w * _inputHeight);
+    var idx = 0;
+    for (var y = 0; y < _inputHeight; y++) {
+      for (var x = 0; x < w; x++) {
+        final p = resized.getPixel(x, y);
+        final l = (p.r * 299 + p.g * 587 + p.b * 114) / 1000.0;
+        out[idx++] = l / 255.0;
+      }
+    }
+
+    final inputOrt = OrtValueTensor.createTensorWithDataList(
+      out,
+      [1, 1, _inputHeight, w],
+    );
+    final runOptions = OrtRunOptions();
+    List<OrtValue?>? outputs;
+    try {
+      outputs = await session.runAsync(runOptions, {'input1': inputOrt});
+      final value =
+          outputs != null && outputs.isNotEmpty ? outputs.first?.value : null;
+      if (value is! List || value.isEmpty) return '';
+      return _decode(value, charset);
+    } finally {
+      for (final o in outputs ?? const <OrtValue?>[]) {
+        o?.release();
+      }
+      inputOrt.release();
+      runOptions.release();
+    }
   }
 
-  /// CTC greedy decode. Model output classes = ["blank"] + character_dict
-  /// (with trailing space), so class 0 is blank and class k maps to dict[k-1].
-  static String _ctcDecode(List logits, List<String> dict) {
-    final classes = logits.isNotEmpty && logits[0] is List
-        ? (logits[0] as List).length
-        : 0;
-    if (classes == 0) return '';
+  /// Decode strategy: captcha charsets are digits in the vast majority of
+  /// cases, and letters in the unrestricted decode are usually font
+  /// confusions (o/0, i/1, u/0, ...). When the unrestricted result contains
+  /// any non-digit, re-decode with the per-step argmax restricted to digits
+  /// (keeping the blank class so CTC collapsing still applies); fall back to
+  /// the unrestricted result when that yields nothing.
+  static String _decode(List output, List<String> charset) {
+    final free = _ctcDecodeAlnum(output, charset);
+    if (free.isEmpty) return free;
+    final hasNonDigit = free.codeUnits.any((c) => c < 0x30 || c > 0x39);
+    if (!hasNonDigit) return free;
+    final digits = _ctcDecodeRestricted(output, charset, digitsOnly: true);
+    return digits.isEmpty ? free : digits;
+  }
 
+  /// CTC greedy decode with the per-step argmax restricted to a charset
+  /// subset (blank + digits when [digitsOnly]).
+  static String _ctcDecodeRestricted(
+    List output,
+    List<String> charset, {
+    required bool digitsOnly,
+  }) {
     final sb = StringBuffer();
     var prevIdx = -1;
-    for (var t = 0; t < logits.length; t++) {
-      final row = logits[t];
-      if (row is! List || row.isEmpty) continue;
-      var maxIdx = -1;
-      var maxVal = double.negativeInfinity;
-      for (var c = 0; c < row.length; c++) {
-        final v = row[c];
-        if (v is num && v.toDouble() > maxVal) {
-          maxVal = v.toDouble();
-          maxIdx = c;
+    for (var t = 0; t < output.length; t++) {
+      var step = output[t];
+      if (step is List && step.length == 1 && step[0] is List) {
+        step = step[0];
+      }
+      if (step is! List || step.isEmpty) continue;
+
+      var bestIdx = 0;
+      var bestVal = double.negativeInfinity;
+      final classes = step.length < charset.length ? step.length : charset.length;
+      for (var c = 0; c < classes; c++) {
+        if (c != 0 && !_isDigit(charset[c])) continue;
+        final v = step[c];
+        if (v is! num) continue;
+        final d = v.toDouble();
+        if (d > bestVal) {
+          bestVal = d;
+          bestIdx = c;
         }
       }
-      if (maxIdx <= 0) {
+
+      if (bestIdx <= 0) {
         prevIdx = -1;
         continue;
       }
-      if (maxIdx == prevIdx) continue; // collapse repeats
-      prevIdx = maxIdx;
-      final charIdx = maxIdx - 1;
-      if (charIdx >= 0 && charIdx < dict.length) {
-        sb.write(dict[charIdx]);
+      if (bestIdx == prevIdx) continue; // collapse repeats
+      prevIdx = bestIdx;
+      sb.write(charset[bestIdx]);
+    }
+    return sb.toString();
+  }
+
+  /// CTC greedy decode over [seqlen,1,classes] logits. When a step's best
+  /// character is outside [0-9a-zA-Z], fall back to that step's best
+  /// alphanumeric character instead of dropping the position.
+  static String _ctcDecodeAlnum(List output, List<String> charset) {
+    final sb = StringBuffer();
+    var prevIdx = -1;
+    for (var t = 0; t < output.length; t++) {
+      var step = output[t];
+      // [seqlen,1,classes] nests one batch row inside each step.
+      if (step is List && step.length == 1 && step[0] is List) {
+        step = step[0];
+      }
+      if (step is! List || step.isEmpty) continue;
+
+      var bestIdx = -1;
+      var bestVal = double.negativeInfinity;
+      var bestAlnumIdx = -1;
+      var bestAlnumVal = double.negativeInfinity;
+      final classes = step.length < charset.length ? step.length : charset.length;
+      for (var c = 0; c < classes; c++) {
+        final v = step[c];
+        if (v is! num) continue;
+        final d = v.toDouble();
+        if (d > bestVal) {
+          bestVal = d;
+          bestIdx = c;
+        }
+        if (d > bestAlnumVal && _isAlnum(charset[c])) {
+          bestAlnumVal = d;
+          bestAlnumIdx = c;
+        }
+      }
+
+      if (bestIdx <= 0) {
+        prevIdx = -1;
+        continue;
+      }
+      if (bestIdx == prevIdx) continue; // collapse repeats
+      prevIdx = bestIdx;
+
+      final ch = charset[bestIdx];
+      if (_isAlnum(ch)) {
+        sb.write(ch);
+      } else if (bestAlnumIdx > 0) {
+        sb.write(charset[bestAlnumIdx]);
       }
     }
     return sb.toString();
   }
-}
 
-class Box {
-  final double x1;
-  final double y1;
-  final double x2;
-  final double y2;
+  static bool _isDigit(String c) {
+    if (c.length != 1) return false;
+    final code = c.codeUnitAt(0);
+    return code >= 0x30 && code <= 0x39;
+  }
 
-  const Box({
-    required this.x1,
-    required this.y1,
-    required this.x2,
-    required this.y2,
-  });
-}
-
-class _BoxQuad {
-  final double x1;
-  final double y1;
-  final double x2;
-  final double y2;
-
-  const _BoxQuad({
-    required this.x1,
-    required this.y1,
-    required this.x2,
-    required this.y2,
-  });
+  static bool _isAlnum(String c) {
+    if (c.length != 1) return false;
+    final code = c.codeUnitAt(0);
+    return (code >= 0x30 && code <= 0x39) || // 0-9
+        (code >= 0x41 && code <= 0x5A) || // A-Z
+        (code >= 0x61 && code <= 0x7A); // a-z
+  }
 }
