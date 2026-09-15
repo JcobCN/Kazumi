@@ -218,8 +218,39 @@ class _SegmentFetch {
   bool completed = false;
   bool failed = false;
 
+  /// 分片级取消令牌：seek 后移出预取窗口或会话结束时放弃下载。
+  final CancelToken cancelToken = CancelToken();
+
+  /// 已放弃（seek 移出窗口或会话关闭），不再重试。
+  bool abandoned = false;
+
+  /// 是否已追加过字节。已向订阅者转发过字节的下载无法安全重试
+  /// （会重复发送字节），只能整体失败。
+  bool bytesAppended = false;
+
+  /// 放弃此下载。
+  void abandon() {
+    abandoned = true;
+    if (!cancelToken.isCancelled) {
+      cancelToken.cancel('abandoned');
+    }
+  }
+
+  /// 是否可以安全地重新下载：从未向订阅者转发过字节。无订阅者时
+  /// 已缓冲字节仅用于之后的回放，可直接丢弃。
+  bool get canRestart => subscribers.isEmpty || !bytesAppended;
+
+  /// 重试前重置状态，仅可在 [canRestart] 为真时调用。
+  void resetForRetry() {
+    buffered = <Uint8List>[];
+    _bufferedBytes = 0;
+    bytesAppended = false;
+    contentLength = -1;
+  }
+
   void appendChunk(Uint8List chunk, IOSink sink) {
     sink.add(chunk);
+    bytesAppended = true;
     final buffer = buffered;
     if (buffer != null) {
       _bufferedBytes += chunk.length;
@@ -307,6 +338,7 @@ class _HlsProxySession {
   });
 
   static const int _prefetchWindow = 8;
+  static const int _maxFetchAttempts = 3;
   static const String _cacheRootName = 'hls_proxy_cache';
   static final RegExp _segmentNamePattern = RegExp(r'^seg_(\d+)\.ts$');
   static final RegExp _keyNamePattern = RegExp(r'^key_(\d+)\.key$');
@@ -324,6 +356,7 @@ class _HlsProxySession {
   final Map<int, _SegmentFetch> _fetches = {};
   final List<int> _prefetchQueue = [];
   int _activeFetchCount = 0;
+  int _lastAnchor = -1;
   bool _closed = false;
   HttpServer? _server;
 
@@ -386,12 +419,22 @@ class _HlsProxySession {
     final keyUriToLocal = <String, String>{};
     for (var i = 0; i < keys.length; i++) {
       final keyPath = path.join(cacheDir.path, 'key_$i.key');
-      await http.download(
-        keys[i].uri,
-        keyPath,
-        headers: httpHeaders,
-        cancelToken: cancelToken,
-      );
+      // 密钥很小，失败大概率是瞬时网络问题，快速重试，避免整个
+      // 代理会话因此回退为直连。
+      for (var attempt = 1;; attempt++) {
+        try {
+          await http.download(
+            keys[i].uri,
+            keyPath,
+            headers: httpHeaders,
+            cancelToken: cancelToken,
+          );
+          break;
+        } catch (e) {
+          if (cancelToken.isCancelled || attempt >= 3) rethrow;
+          await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+        }
+      }
       keyUriToLocal[keys[i].uri] = 'key_$i.key';
     }
 
@@ -407,9 +450,10 @@ class _HlsProxySession {
       keyUriToLocal: keyUriToLocal,
     );
 
+    // 与下载设置的分片并发滑杆范围（1-10）保持一致。
     final parallel =
         GStorage.getSetting(SettingsKeys.downloadParallelSegments)
-            .clamp(1, 6)
+            .clamp(1, 10)
             .toInt();
 
     final session = _HlsProxySession._(
@@ -487,6 +531,9 @@ class _HlsProxySession {
     _closed = true;
     _cancelToken.cancel();
     _prefetchQueue.clear();
+    for (final fetch in _fetches.values.toList()) {
+      fetch.abandon();
+    }
     final server = _server;
     _server = null;
     try {
@@ -573,7 +620,11 @@ class _HlsProxySession {
       await _respondError(request, 404);
       return;
     }
-    _schedulePrefetch(index);
+    // 与上一请求不相邻即为 seek。顺序播放时 demuxer 可能仍持有上一
+    // 分片的订阅（预读一个分片），此时不能放弃进行中的下载。
+    final seek = _lastAnchor >= 0 && (index - _lastAnchor).abs() > 1;
+    _lastAnchor = index;
+    _schedulePrefetch(index, seek: seek);
     final file = File(path.join(cacheDir.path, _segmentFileName(index)));
     if (await file.exists()) {
       await _serveFile(request, file);
@@ -621,8 +672,17 @@ class _HlsProxySession {
     fetch.subscribe(response);
   }
 
-  void _schedulePrefetch(int anchor) {
+  void _schedulePrefetch(int anchor, {bool seek = false}) {
     _prefetchQueue.clear();
+    if (seek) {
+      // seek 后旧窗口的进行中下载已无用，放弃以立刻释放并行额度；
+      // 否则它们会占满并发数，拖慢 seek 目标分片的获取。
+      for (final fetch in _fetches.values.toList()) {
+        if (fetch.index < anchor || fetch.index >= anchor + _prefetchWindow) {
+          fetch.abandon();
+        }
+      }
+    }
     final last = anchor + _prefetchWindow;
     for (var j = anchor; j < last && j < segments.length; j++) {
       if (_fetches.containsKey(j)) continue;
@@ -662,41 +722,65 @@ class _HlsProxySession {
 
   Future<void> _runFetch(_SegmentFetch fetch) async {
     try {
-      final response = await _http.getStream(
-        fetch.url,
-        headers: httpHeaders,
-        cancelToken: _cancelToken,
-      );
-      fetch.contentLength = int.tryParse(
-            response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
-          ) ??
-          -1;
-      final sink = File(fetch.tmpPath).openWrite();
-      try {
-        await for (final chunk in response.data!.stream) {
-          fetch.appendChunk(chunk, sink);
-        }
-        await sink.flush();
-        await sink.close();
-      } catch (e) {
+      for (var attempt = 1;; attempt++) {
         try {
-          await sink.close();
-        } catch (_) {}
-        rethrow;
-      }
-      await File(fetch.tmpPath).rename(fetch.finalPath);
-      fetch.finishSuccess();
-    } catch (e) {
-      try {
-        final tmp = File(fetch.tmpPath);
-        if (await tmp.exists()) await tmp.delete();
-      } catch (_) {}
-      fetch.finishFailure();
-      if (!_cancelToken.isCancelled && !_closed) {
-        KazumiLogger().w(
-          'HlsProxy: segment ${fetch.index} fetch failed',
-          error: e,
-        );
+          final response = await _http.getStream(
+            fetch.url,
+            headers: httpHeaders,
+            cancelToken: fetch.cancelToken,
+          );
+          fetch.contentLength = int.tryParse(
+                response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+              ) ??
+              -1;
+          final sink = File(fetch.tmpPath).openWrite();
+          try {
+            await for (final chunk in response.data!.stream) {
+              fetch.appendChunk(chunk, sink);
+            }
+            await sink.flush();
+            await sink.close();
+          } catch (e) {
+            try {
+              await sink.close();
+            } catch (_) {}
+            rethrow;
+          }
+          await File(fetch.tmpPath).rename(fetch.finalPath);
+          fetch.finishSuccess();
+          return;
+        } catch (e) {
+          // 会话关闭或分片被放弃（seek 移出窗口）不算失败。
+          final cancelled =
+              _cancelToken.isCancelled || fetch.abandoned || _closed;
+          // 已向订阅者转发过字节且仍有订阅者的下载无法安全重试，
+          // 直接失败，由播放器重新请求触发全新下载。先同步完成判定
+          // 与状态重置，再做带 await 的临时文件清理，避免清理间隙
+          // 到达的新订阅者回放到即将被丢弃的旧字节。
+          final retry = !cancelled &&
+              attempt < _maxFetchAttempts &&
+              fetch.canRestart;
+          if (retry) {
+            fetch.resetForRetry();
+          } else {
+            fetch.finishFailure();
+            if (!cancelled) {
+              KazumiLogger().w(
+                'HlsProxy: segment ${fetch.index} fetch failed '
+                'after $attempt attempt(s)',
+                error: e,
+              );
+            }
+          }
+          try {
+            final tmp = File(fetch.tmpPath);
+            if (await tmp.exists()) await tmp.delete();
+          } catch (_) {}
+          if (!retry) {
+            return;
+          }
+        }
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
       }
     } finally {
       _fetches.remove(fetch.index);
