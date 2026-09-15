@@ -1,9 +1,10 @@
-name: "Branch build (feat/hls-proxy)"
+name: "Branch build (hls-proxy)"
 
 on:
   push:
     branches:
       - "feat/hls-proxy"
+      - "enhance"
   workflow_dispatch:
     inputs:
       run_android:
