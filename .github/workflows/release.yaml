@@ -605,7 +605,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'          
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
       - name: Setup Android build tools
         run: sdkmanager "build-tools;34.0.0"
 
