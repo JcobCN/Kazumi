@@ -32,39 +32,50 @@ class BangumiApi {
   static final AsyncRateLimiter _writeRateLimiter =
       AsyncRateLimiter(const Duration(milliseconds: 250));
 
-  /// Posts a subject-search request, retrying once through the bgmapi.com
-  /// community mirror when the primary attempt fails. This keeps search
-  /// usable when the official API is unreachable or when the kazumi.fyi
-  /// mirror rejects the request (e.g. self-built releases that lack the
-  /// KAZUMI_APPID/KAZUMI_KEY dart-defines produce invalid signatures).
-  static Future<dynamic> _postSearchWithMirrorFallback(
+  /// Posts a subject-search request through the public bgmapi.com mirror.
+  ///
+  /// Do not send search requests through api.kazumi.fyi: its
+  /// `/v0/search/subjects` endpoint requires the private KAZUMI_APPID and
+  /// KAZUMI_KEY dart-defines. Fork/self-built clients therefore receive 401
+  /// from that endpoint. The old implementation tried kazumi.fyi first and
+  /// only used bgmapi.com after the failure, which made the result depend on
+  /// the current proxy and could leave the search looking empty.
+  ///
+  /// `bypassMirror` is intentional. Otherwise the Bangumi interceptor can
+  /// rewrite this request back to api.kazumi.fyi when the Bangumi mirror
+  /// setting is enabled.
+  static Future<dynamic> _postSearch(
     String url,
     Map<String, dynamic> params,
   ) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.path.isEmpty) {
+      throw const FormatException('Invalid Bangumi search URL');
+    }
+    final searchUrl = ApiEndpoints.bangumiAuthAPIMirrorDomain +
+        uri.path +
+        (uri.hasQuery ? '?${uri.query}' : '');
     try {
-      return await _client.post(url, data: params);
+      KazumiLogger().d('BangumiApi: search via $searchUrl');
+      return await _client.post(
+        searchUrl,
+        data: params,
+        bypassMirror: true,
+      );
     } on Exception catch (e) {
-      final fallbackUrl = _toAuthMirrorUrl(url);
-      if (fallbackUrl == null) rethrow;
+      // Keep the official endpoint as a last resort. Bypass the mirror here
+      // as well; retrying through api.kazumi.fyi would just reproduce the
+      // missing-signature 401.
       KazumiLogger().w(
-        'BangumiApi: search request failed, retrying via bgmapi mirror',
+        'BangumiApi: bgmapi search failed, retrying official API',
         error: e,
       );
       return await _client.post(
-        fallbackUrl,
+        url,
         data: params,
         bypassMirror: true,
       );
     }
-  }
-
-  /// Rebuilds an api.bgm.tv request URL against the bgmapi.com mirror.
-  static String? _toAuthMirrorUrl(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null || uri.path.isEmpty) return null;
-    return ApiEndpoints.bangumiAuthAPIMirrorDomain +
-        uri.path +
-        (uri.hasQuery ? '?${uri.query}' : '');
   }
 
   static Future<List<List<BangumiItem>>> getCalendar() async {
@@ -111,7 +122,7 @@ class BangumiApi {
       final url = ApiEndpoints.formatUrl(
           ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
           [limit, offset]);
-      final jsonData = await _postSearchWithMirrorFallback(url, params);
+      final jsonData = await _postSearch(url, params);
       final jsonList = jsonData['data'];
       for (dynamic jsonItem in jsonList) {
         if (jsonItem is Map<String, dynamic>) {
@@ -205,7 +216,7 @@ class BangumiApi {
       };
     }
     try {
-      final jsonData = await _postSearchWithMirrorFallback(
+      final jsonData = await _postSearch(
         ApiEndpoints.formatUrl(
             ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
             [100, 0]),
@@ -360,7 +371,7 @@ class BangumiApi {
     );
 
     try {
-      final jsonData = await _postSearchWithMirrorFallback(
+      final jsonData = await _postSearch(
         ApiEndpoints.formatUrl(
             ApiEndpoints.bangumiAPIDomain + ApiEndpoints.bangumiRankSearch,
             [limit, offset]),
