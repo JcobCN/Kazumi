@@ -378,17 +378,16 @@ jobs:
           export ARCH=x86_64
           export VERSION="${tag#v}"
 
-          # linuxdeploy requires an AppDir in a usr/ layout
-          mkdir -p appimage_pkg/usr/bin appimage_pkg/usr/lib appimage_pkg/usr/share
-          cp build/linux/x64/release/bundle/kazumi appimage_pkg/usr/bin/kazumi
-          cp -r build/linux/x64/release/bundle/lib/. appimage_pkg/usr/lib/
-          if [ -d build/linux/x64/release/bundle/data ]; then
-            cp -r build/linux/x64/release/bundle/data appimage_pkg/usr/share/
-          fi
+          # Keep the Flutter bundle layout (kazumi + ./lib + ./data) so the
+          # $ORIGIN/lib runtime rpath keeps resolving the bundled/plugin libs.
+          rm -rf appimage_pkg
+          mkdir -p appimage_pkg/usr/share/applications appimage_pkg/usr/share/icons/hicolor/512x512/apps
+          cp -r build/linux/x64/release/bundle/. appimage_pkg/
 
-          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/
-          chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
-          cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
+          # Register the desktop entry and icon inside the standard AppDir paths
+          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/usr/share/applications/
+          sed -i -e 's|^Icon=.*|Icon=kazumi|' appimage_pkg/usr/share/applications/io.github.Predidit.Kazumi.desktop
+          cp assets/images/logo/logo_linux.png appimage_pkg/usr/share/icons/hicolor/512x512/apps/kazumi.png
 
           # Download linuxdeploy and its appimage plugin (gtk plugin has no prebuilt release)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
@@ -408,9 +407,9 @@ jobs:
 
           ./linuxdeploy-x86_64.AppImage \
             --appdir appimage_pkg \
-            -e appimage_pkg/usr/bin/kazumi \
-            -d appimage_pkg/io.github.Predidit.Kazumi.desktop \
-            -i appimage_pkg/kazumi.png \
+            -e appimage_pkg/kazumi \
+            -d appimage_pkg/usr/share/applications/io.github.Predidit.Kazumi.desktop \
+            -i appimage_pkg/usr/share/icons/hicolor/512x512/apps/kazumi.png \
             --plugin gtk \
             --output appimage
 
@@ -531,17 +530,16 @@ jobs:
           export ARCH=aarch64
           export VERSION="${tag#v}"
 
-          # linuxdeploy requires an AppDir in a usr/ layout
-          mkdir -p appimage_pkg/usr/bin appimage_pkg/usr/lib appimage_pkg/usr/share
-          cp build/linux/arm64/release/bundle/kazumi appimage_pkg/usr/bin/kazumi
-          cp -r build/linux/arm64/release/bundle/lib/. appimage_pkg/usr/lib/
-          if [ -d build/linux/arm64/release/bundle/data ]; then
-            cp -r build/linux/arm64/release/bundle/data appimage_pkg/usr/share/
-          fi
+          # Keep the Flutter bundle layout (kazumi + ./lib + ./data) so the
+          # $ORIGIN/lib runtime rpath keeps resolving the bundled/plugin libs.
+          rm -rf appimage_pkg
+          mkdir -p appimage_pkg/usr/share/applications appimage_pkg/usr/share/icons/hicolor/512x512/apps
+          cp -r build/linux/arm64/release/bundle/. appimage_pkg/
 
-          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/
-          chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
-          cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
+          # Register the desktop entry and icon inside the standard AppDir paths
+          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/usr/share/applications/
+          sed -i -e 's|^Icon=.*|Icon=kazumi|' appimage_pkg/usr/share/applications/io.github.Predidit.Kazumi.desktop
+          cp assets/images/logo/logo_linux.png appimage_pkg/usr/share/icons/hicolor/512x512/apps/kazumi.png
 
           # Download linuxdeploy and its appimage plugin (gtk plugin has no prebuilt release)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
@@ -560,9 +558,9 @@ jobs:
 
           ./linuxdeploy-aarch64.AppImage \
             --appdir appimage_pkg \
-            -e appimage_pkg/usr/bin/kazumi \
-            -d appimage_pkg/io.github.Predidit.Kazumi.desktop \
-            -i appimage_pkg/kazumi.png \
+            -e appimage_pkg/kazumi \
+            -d appimage_pkg/usr/share/applications/io.github.Predidit.Kazumi.desktop \
+            -i appimage_pkg/usr/share/icons/hicolor/512x512/apps/kazumi.png \
             --plugin gtk \
             --output appimage
 
