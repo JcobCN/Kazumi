@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:kazumi/pages/collect/collect_controller.dart';
 import 'package:kazumi/repositories/collect_crud_repository.dart';
+import 'package:kazumi/request/apis/bangumi_api.dart';
 import 'package:kazumi/request/clients/bangumi_client.dart';
 import 'package:kazumi/request/core/dio_factory.dart';
 import 'package:kazumi/request/core/network_exception.dart';
@@ -79,6 +80,28 @@ void main() {
     expect(
         adapter.requests.single.headers['Authorization'], 'Bearer saved-token');
     expect(GStorage.getSetting(SettingsKeys.bangumiSyncEnable), isTrue);
+  });
+
+  test('public subject search omits the saved sync token', () async {
+    adapter.respond = (_) async => _json({
+          'data': [_subject()],
+        });
+    for (final enableMirror in [false, true]) {
+      // Exercise the same public path with either mirror setting.
+      await GStorage.putSetting(
+        SettingsKeys.enableBangumiProxy,
+        enableMirror,
+      );
+      adapter.requests.clear();
+
+      final page = await BangumiApi.bangumiSearch('frieren');
+
+      expect(page, isNotNull);
+      expect(page!.items, hasLength(1));
+      expect(adapter.requests, hasLength(1));
+      expect(adapter.requests.single.uri.host, 'api.bgmapi.com');
+      expect(adapter.requests.single.headers['Authorization'], isNull);
+    }
   });
 
   test('failed draft validation preserves credentials and connected account',
@@ -248,6 +271,32 @@ ResponseBody _user([String username = 'saved-user']) => _json({
       'username': username,
       'avatar': <String, String>{},
     });
+
+Map<String, dynamic> _subject() => {
+      'id': 1,
+      'type': 2,
+      'name': 'Frieren',
+      'name_cn': '葬送的芙莉莲',
+      'summary': '',
+      'date': '2023-09-29',
+      'images': <String, String>{
+        'small': '',
+        'grid': '',
+        'large': '',
+        'medium': '',
+        'common': '',
+      },
+      'tags': <Map<String, dynamic>>[],
+      'infobox': <Map<String, dynamic>>[],
+      'rating': {
+        'rank': 1,
+        'total': 0,
+        'score': 0.0,
+        'count': <String, int>{
+          for (var i = 1; i <= 10; i++) '$i': 0,
+        },
+      },
+    };
 
 class _BangumiAdapter implements HttpClientAdapter {
   final requests = <RequestOptions>[];

@@ -41,8 +41,12 @@ class BangumiApi {
   /// only used bgmapi.com after the failure, which made the result depend on
   /// the current proxy and could leave the search looking empty.
   ///
-  /// `bypassMirror` is intentional. Otherwise the Bangumi interceptor can
-  /// rewrite this request back to api.kazumi.fyi when the Bangumi mirror
+  /// `includeAuth: false` is also intentional. Search is a public endpoint;
+  /// forwarding a saved Bangumi sync token can make bgmapi.com reject the
+  /// request with 401 when the token is expired or otherwise invalid.
+  ///
+  /// `bypassMirror` is intentional as well. Otherwise the Bangumi interceptor
+  /// can rewrite this request back to api.kazumi.fyi when the Bangumi mirror
   /// setting is enabled.
   static Future<dynamic> _postSearch(
     String url,
@@ -60,6 +64,7 @@ class BangumiApi {
       return await _client.post(
         searchUrl,
         data: params,
+        includeAuth: false,
         bypassMirror: true,
       );
     } on Exception catch (e) {
@@ -73,6 +78,7 @@ class BangumiApi {
       return await _client.post(
         url,
         data: params,
+        includeAuth: false,
         bypassMirror: true,
       );
     }

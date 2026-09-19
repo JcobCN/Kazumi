@@ -18,6 +18,7 @@ class BangumiClient {
     Map<String, dynamic>? queryParameters,
     bool requiresAuth = false,
     String? accessToken,
+    bool includeAuth = true,
     CancelToken? cancelToken,
   }) async {
     try {
@@ -28,6 +29,7 @@ class BangumiClient {
           headers: _headers(
             requiresAuth: requiresAuth,
             accessToken: accessToken,
+            includeAuth: includeAuth,
             url: url,
             method: 'GET',
           ),
@@ -45,6 +47,7 @@ class BangumiClient {
     Object? data,
     Map<String, dynamic>? queryParameters,
     bool requiresAuth = false,
+    bool includeAuth = true,
     bool bypassMirror = false,
     CancelToken? cancelToken,
   }) async {
@@ -56,6 +59,7 @@ class BangumiClient {
         options: Options(
           headers: _headers(
             requiresAuth: requiresAuth,
+            includeAuth: includeAuth,
             url: url,
             method: 'POST',
             data: data,
@@ -74,6 +78,7 @@ class BangumiClient {
   Map<String, dynamic> _headers({
     required bool requiresAuth,
     String? accessToken,
+    required bool includeAuth,
     required String url,
     required String method,
     Object? data,
@@ -85,7 +90,9 @@ class BangumiClient {
     final token = (accessToken ??
             GStorage.getSetting<String>(SettingsKeys.bangumiAccessToken))
         .trim();
-    if ((requiresAuth || bangumiSyncEnable) && token.isNotEmpty) {
+    if (includeAuth &&
+        (requiresAuth || bangumiSyncEnable) &&
+        token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
     if (!bypassMirror &&
