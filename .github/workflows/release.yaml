@@ -369,6 +369,50 @@ jobs:
           cd ..
           dpkg-deb --build --root-owner-group Kazumi_linux_${{ env.tag }}_amd64
         shell: bash
+      - name: Package linux amd64 AppImage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils desktop-file-utils || true
+          (sudo apt-get install -y libfuse2 >/dev/null 2>&1) || sudo apt-get install -y libfuse2t64 || true
+
+          export ARCH=x86_64
+          export VERSION="${tag#v}"
+
+          # linuxdeploy requires an AppDir in a usr/ layout
+          mkdir -p appimage_pkg/usr/bin appimage_pkg/usr/lib appimage_pkg/usr/share
+          cp build/linux/x64/release/bundle/kazumi appimage_pkg/usr/bin/kazumi
+          cp -r build/linux/x64/release/bundle/lib/. appimage_pkg/usr/lib/
+          if [ -d build/linux/x64/release/bundle/data ]; then
+            cp -r build/linux/x64/release/bundle/data appimage_pkg/usr/share/
+          fi
+
+          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/
+          chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
+          cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
+
+          # Download linuxdeploy and its gtk / appimage plugins
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy*
+
+          # CI has no FUSE, so run the AppImages by extracting them first
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          # linuxdeploy discovers plugins by a plain named binary on PATH
+          cp linuxdeploy-plugin-gtk-x86_64.AppImage linuxdeploy-plugin-gtk
+          cp linuxdeploy-plugin-appimage-x86_64.AppImage linuxdeploy-plugin-appimage
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir appimage_pkg \
+            -e appimage_pkg/usr/bin/kazumi \
+            -d appimage_pkg/io.github.Predidit.Kazumi.desktop \
+            -i appimage_pkg/kazumi.png \
+            --plugin gtk \
+            --output appimage
+
+          mv Kazumi-*.AppImage Kazumi_linux_${{ env.tag }}_amd64.AppImage
+        shell: bash
 
       - name: Upload linux amd64 outputs
         uses: actions/upload-artifact@v4
@@ -377,6 +421,7 @@ jobs:
           path: |
             Kazumi_linux_*.tar.gz
             Kazumi_linux_*.deb
+            Kazumi_linux_*.AppImage
 
   flutter-build-linux-arm64:
     name: "Release for Linux arm64"
@@ -474,6 +519,49 @@ jobs:
           cd ..
           dpkg-deb --build --root-owner-group Kazumi_linux_${{ env.tag }}_arm64
         shell: bash
+      - name: Package linux arm64 AppImage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file binutils desktop-file-utils || true
+          (sudo apt-get install -y libfuse2 >/dev/null 2>&1) || sudo apt-get install -y libfuse2t64 || true
+
+          export ARCH=aarch64
+          export VERSION="${tag#v}"
+
+          # linuxdeploy requires an AppDir in a usr/ layout
+          mkdir -p appimage_pkg/usr/bin appimage_pkg/usr/lib appimage_pkg/usr/share
+          cp build/linux/arm64/release/bundle/kazumi appimage_pkg/usr/bin/kazumi
+          cp -r build/linux/arm64/release/bundle/lib/. appimage_pkg/usr/lib/
+          if [ -d build/linux/arm64/release/bundle/data ]; then
+            cp -r build/linux/arm64/release/bundle/data appimage_pkg/usr/share/
+          fi
+
+          cp assets/linux/io.github.Predidit.Kazumi.desktop appimage_pkg/
+          chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
+          cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
+
+          # Download linuxdeploy and its gtk / appimage plugins (aarch64)
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-aarch64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage
+          chmod +x linuxdeploy*
+
+          # CI has no FUSE, so run the AppImages by extracting them first
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          cp linuxdeploy-plugin-gtk-aarch64.AppImage linuxdeploy-plugin-gtk
+          cp linuxdeploy-plugin-appimage-aarch64.AppImage linuxdeploy-plugin-appimage
+
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir appimage_pkg \
+            -e appimage_pkg/usr/bin/kazumi \
+            -d appimage_pkg/io.github.Predidit.Kazumi.desktop \
+            -i appimage_pkg/kazumi.png \
+            --plugin gtk \
+            --output appimage
+
+          mv Kazumi-*.AppImage Kazumi_linux_${{ env.tag }}_arm64.AppImage
+        shell: bash
 
       - name: Upload linux arm64 outputs
         uses: actions/upload-artifact@v4
@@ -482,6 +570,7 @@ jobs:
           path: |
             Kazumi_linux_*.tar.gz
             Kazumi_linux_*.deb
+            Kazumi_linux_*.AppImage
 
   flutter-build-ios:
     name: "Release for iOS"
@@ -719,3 +808,4 @@ jobs:
             Kazumi_ios_*.ipa
             Kazumi_linux_*.tar.gz
             Kazumi_linux_*.deb
+            Kazumi_linux_*.AppImage
