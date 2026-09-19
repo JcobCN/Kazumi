@@ -390,18 +390,21 @@ jobs:
           chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
           cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
 
-          # Download linuxdeploy and its gtk / appimage plugins
+          # Download linuxdeploy and its appimage plugin (gtk plugin has no prebuilt release)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy*
 
           # CI has no FUSE, so run the AppImages by extracting them first
           export APPIMAGE_EXTRACT_AND_RUN=1
 
+          # GTK plugin ships only as a source script on master; works for both arches
+          wget -q https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh -O linuxdeploy-plugin-gtk
+          chmod +x linuxdeploy-plugin-gtk
+
           # linuxdeploy discovers plugins by a plain named binary on PATH
-          cp linuxdeploy-plugin-gtk-x86_64.AppImage linuxdeploy-plugin-gtk
           cp linuxdeploy-plugin-appimage-x86_64.AppImage linuxdeploy-plugin-appimage
+          export PATH="$PWD:$PATH"
 
           ./linuxdeploy-x86_64.AppImage \
             --appdir appimage_pkg \
@@ -540,17 +543,20 @@ jobs:
           chmod +x appimage_pkg/io.github.Predidit.Kazumi.desktop
           cp assets/images/logo/logo_linux.png appimage_pkg/kazumi.png
 
-          # Download linuxdeploy and its gtk / appimage plugins (aarch64)
+          # Download linuxdeploy and its appimage plugin (gtk plugin has no prebuilt release)
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-aarch64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage
           chmod +x linuxdeploy*
 
           # CI has no FUSE, so run the AppImages by extracting them first
           export APPIMAGE_EXTRACT_AND_RUN=1
 
-          cp linuxdeploy-plugin-gtk-aarch64.AppImage linuxdeploy-plugin-gtk
+          # GTK plugin ships only as a source script on master; works for both arches
+          wget -q https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh -O linuxdeploy-plugin-gtk
+          chmod +x linuxdeploy-plugin-gtk
+
           cp linuxdeploy-plugin-appimage-aarch64.AppImage linuxdeploy-plugin-appimage
+          export PATH="$PWD:$PATH"
 
           ./linuxdeploy-aarch64.AppImage \
             --appdir appimage_pkg \
