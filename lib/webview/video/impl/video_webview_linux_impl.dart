@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:kazumi/services/video_source/video_source_format.dart';
 import 'package:kazumi/webview/video/video_webview_controller.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
@@ -109,7 +110,12 @@ class VideoWebviewLinuxImpl extends VideoWebviewController<Webview> {
                 .add('Loading video source ${decodeVideoSource(messageItem)}');
             unloadPage();
             final videoUrl = decodeVideoSource(messageItem);
-            notifyVideoSourceResolved(videoUrl);
+            notifyVideoSourceResolved(
+              videoUrl,
+              format: isM3U8Url(videoUrl.toLowerCase())
+                  ? VideoSourceFormat.hls
+                  : VideoSourceFormat.auto,
+            );
           }
         }
       }
@@ -125,7 +131,12 @@ class VideoWebviewLinuxImpl extends VideoWebviewController<Webview> {
           isVideoSourceLoaded = true;
           videoLoadingEventController.add(false);
           unloadPage();
-          notifyVideoSourceResolved(videoUrl);
+          notifyVideoSourceResolved(
+            videoUrl,
+            format: isM3U8Url(videoUrl.toLowerCase())
+                ? VideoSourceFormat.hls
+                : VideoSourceFormat.auto,
+          );
         }
       }
     });

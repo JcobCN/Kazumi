@@ -56,6 +56,12 @@ abstract class VideoWebviewController<T> {
   Stream<VideoParserEvent> get onVideoURLParser =>
       _videoParserEventController.stream;
 
+  /// Detects a media playlist URL even when it carries query parameters.
+  bool isM3U8Url(String url) {
+    final uri = Uri.tryParse(url);
+    return uri != null && uri.path.toLowerCase().endsWith('.m3u8');
+  }
+
   @protected
   void notifyVideoSourceResolved(
     String url, {

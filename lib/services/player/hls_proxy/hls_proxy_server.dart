@@ -8,6 +8,8 @@ import 'package:dio/dio.dart';
 import 'package:kazumi/request/clients/download_http_client.dart';
 import 'package:kazumi/request/core/network_exception.dart';
 import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/services/network/metered_network_service.dart';
+import 'package:kazumi/services/player/hls_prefetch_policy.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/media.dart';
 import 'package:kazumi/utils/m3u8_ad_filter.dart';
@@ -51,6 +53,8 @@ class HlsProxyResult {
 /// ffmpeg/mpv 的 HLS demuxer 一次只用单个连接串行拉取分片，遇到 CDN
 /// 单连接限速时缓冲追不上播放速度导致卡顿。此代理在回环地址上提供
 /// 改写后的播放列表，并以多连接并行预取分片，绕过单连接限速。
+/// 预取范围按当前播放时间和网络类型限制为滑动窗口，不会因为连接很快
+/// 而把整个 VOD 一次性下载完。
 ///
 /// 生命周期与播放会话对齐：每次 [resolvePlaybackUrl] 会结束上一个会话
 /// 并按需创建新会话；[stop] 结束当前会话并清理磁盘缓存。任何初始化
@@ -65,12 +69,24 @@ class HlsProxy {
   _HlsProxySession? _session;
   bool _cachePurged = false;
 
+  /// Updates the media-time anchor used by the active proxy session. The
+  /// proxy deliberately does not use every segment request as an anchor,
+  /// because mpv may request far-ahead segments while filling its cache.
+  void updatePlaybackPosition(
+    Duration position, {
+    bool force = false,
+  }) {
+    _session?.updatePlaybackPosition(position, force: force);
+  }
+
   /// 返回播放器应打开的 URL：代理 URL，或禁用/不适用/初始化失败时的
   /// 原始 URL。
   Future<HlsProxyResult> resolvePlaybackUrl(
     String url,
     Map<String, String> httpHeaders, {
     required bool adBlockerEnabled,
+    bool forceHls = false,
+    Duration initialPosition = Duration.zero,
   }) async {
     if (!GStorage.getSetting<bool>(SettingsKeys.hlsProxyEnabled)) {
       return HlsProxyResult(url, HlsProxyStatus.disabled);
@@ -79,7 +95,7 @@ class HlsProxy {
     if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
       return HlsProxyResult(url, HlsProxyStatus.notApplicable);
     }
-    if (_hasDirectMediaExtension(uri.path)) {
+    if (!forceHls && _hasDirectMediaExtension(uri.path)) {
       return HlsProxyResult(url, HlsProxyStatus.notApplicable);
     }
 
@@ -91,6 +107,7 @@ class HlsProxy {
         url,
         httpHeaders,
         adBlockerEnabled: adBlockerEnabled,
+        initialPosition: initialPosition,
       );
       _session = session;
       KazumiLogger().i(
@@ -335,9 +352,9 @@ class _HlsProxySession {
     required this.cacheDir,
     required this.httpHeaders,
     required this.parallel,
+    required this.segmentDurations,
   });
 
-  static const int _prefetchWindow = 8;
   static const int _maxFetchAttempts = 3;
   static const String _cacheRootName = 'hls_proxy_cache';
   static final RegExp _segmentNamePattern = RegExp(r'^seg_(\d+)\.ts$');
@@ -351,12 +368,15 @@ class _HlsProxySession {
   final Directory cacheDir;
   final Map<String, String> httpHeaders;
   final int parallel;
+  final List<double> segmentDurations;
 
   final CancelToken _cancelToken = CancelToken();
   final Map<int, _SegmentFetch> _fetches = {};
   final List<int> _prefetchQueue = [];
+  final Map<int, List<Completer<bool>>> _windowWaiters = {};
   int _activeFetchCount = 0;
-  int _lastAnchor = -1;
+  int _playbackAnchor = 0;
+  int _prefetchGeneration = 0;
   bool _closed = false;
   HttpServer? _server;
 
@@ -367,6 +387,7 @@ class _HlsProxySession {
     String m3u8Url,
     Map<String, String> httpHeaders, {
     required bool adBlockerEnabled,
+    Duration initialPosition = Duration.zero,
   }) async {
     final cancelToken = CancelToken();
     final http = DownloadHttpClient.instance;
@@ -451,10 +472,9 @@ class _HlsProxySession {
     );
 
     // 与下载设置的分片并发滑杆范围（1-10）保持一致。
-    final parallel =
-        GStorage.getSetting(SettingsKeys.downloadParallelSegments)
-            .clamp(1, 10)
-            .toInt();
+    final parallel = GStorage.getSetting(SettingsKeys.downloadParallelSegments)
+        .clamp(1, 10)
+        .toInt();
 
     final session = _HlsProxySession._(
       sessionId: sessionId,
@@ -463,9 +483,14 @@ class _HlsProxySession {
       cacheDir: cacheDir,
       httpHeaders: httpHeaders,
       parallel: parallel,
+      segmentDurations: [for (final segment in segments) segment.duration],
+    );
+    session._playbackAnchor = HlsPrefetchPolicy.indexForPosition(
+      session.segmentDurations,
+      position: initialPosition,
     );
     await session._bind();
-    session._schedulePrefetch(0);
+    session._schedulePrefetch(session._playbackAnchor);
     return session;
   }
 
@@ -516,6 +541,7 @@ class _HlsProxySession {
   Future<void> _bind() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server = server;
+    MeteredNetworkService.listenable.addListener(_onNetworkChanged);
     server.listen(
       (request) {
         unawaited(_handleRequest(request));
@@ -529,8 +555,10 @@ class _HlsProxySession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    MeteredNetworkService.listenable.removeListener(_onNetworkChanged);
     _cancelToken.cancel();
     _prefetchQueue.clear();
+    _completeWindowWaiters(false);
     for (final fetch in _fetches.values.toList()) {
       fetch.abandon();
     }
@@ -579,7 +607,8 @@ class _HlsProxySession {
       if (keyMatch != null) {
         final file = File(path.join(cacheDir.path, name));
         if (await file.exists()) {
-          await _serveFile(request, file, contentType: 'application/octet-stream');
+          await _serveFile(request, file,
+              contentType: 'application/octet-stream');
         } else {
           await _respondError(request, 404);
         }
@@ -620,22 +649,25 @@ class _HlsProxySession {
       await _respondError(request, 404);
       return;
     }
-    // 与上一请求不相邻即为 seek。顺序播放时 demuxer 可能仍持有上一
-    // 分片的订阅（预读一个分片），此时不能放弃进行中的下载。
-    final seek = _lastAnchor >= 0 && (index - _lastAnchor).abs() > 1;
-    _lastAnchor = index;
-    _schedulePrefetch(index, seek: seek);
+    // The playback controller updates [_playbackAnchor] on real seeks and
+    // during normal playback. Do not use every segment request as the anchor:
+    // mpv may request speculative, far-ahead segments while filling its cache.
+    // Hold requests at the edge of the window instead of allowing a fast
+    // demuxer to turn speculative requests into an unbounded download.
     final file = File(path.join(cacheDir.path, _segmentFileName(index)));
+    // A stale request can arrive after a seek. Serving an already cached
+    // segment is safe and avoids turning that race into a player error.
     if (await file.exists()) {
       await _serveFile(request, file);
       return;
     }
+    if (!await _waitForSegmentInWindow(index)) {
+      await _respondError(request, 503);
+      return;
+    }
+    _schedulePrefetch(_playbackAnchor);
     var fetch = _fetches[index];
     if (fetch == null) {
-      if (await file.exists()) {
-        await _serveFile(request, file);
-        return;
-      }
       // 播放器请求优先于预取队列。
       _prefetchQueue.remove(index);
       fetch = _startFetch(index);
@@ -672,19 +704,121 @@ class _HlsProxySession {
     fetch.subscribe(response);
   }
 
-  void _schedulePrefetch(int anchor, {bool seek = false}) {
+  void _onNetworkChanged() {
+    if (_closed) {
+      return;
+    }
+    // A handover from WLAN to cellular must shrink the active window
+    // immediately instead of waiting for the next segment request.
+    _schedulePrefetch(
+      _playbackAnchor,
+      seek: true,
+      cancelPendingRequests: false,
+    );
+  }
+
+  void updatePlaybackPosition(
+    Duration position, {
+    bool force = false,
+  }) {
+    if (_closed || segmentDurations.isEmpty) {
+      return;
+    }
+    final anchor = HlsPrefetchPolicy.indexForPosition(
+      segmentDurations,
+      position: position,
+    );
+    if (anchor == _playbackAnchor) {
+      return;
+    }
+    _playbackAnchor = anchor;
+    _schedulePrefetch(
+      anchor,
+      seek: true,
+      cancelPendingRequests: force,
+    );
+  }
+
+  bool _isSegmentInWindow(int index) {
+    final start = max(0, _playbackAnchor - 1);
+    final end = HlsPrefetchPolicy.endIndexFor(
+      segmentDurations,
+      anchor: _playbackAnchor,
+      isMetered: MeteredNetworkService.isMetered,
+    );
+    return index >= start && index < end;
+  }
+
+  Future<bool> _waitForSegmentInWindow(int index) {
+    if (_isSegmentInWindow(index)) {
+      return Future<bool>.value(true);
+    }
+    if (index < max(0, _playbackAnchor - 1)) {
+      return Future<bool>.value(false);
+    }
+    final waiter = Completer<bool>();
+    _windowWaiters.putIfAbsent(index, () => <Completer<bool>>[]).add(waiter);
+    return waiter.future;
+  }
+
+  void _completeWindowWaiters(bool allowed) {
+    final waiters = _windowWaiters.values.expand((items) => items).toList();
+    _windowWaiters.clear();
+    for (final waiter in waiters) {
+      if (!waiter.isCompleted) {
+        waiter.complete(allowed);
+      }
+    }
+  }
+
+  void _notifyWindowWaiters({bool cancelOutside = false}) {
+    final start = max(0, _playbackAnchor - 1);
+    final end = HlsPrefetchPolicy.endIndexFor(
+      segmentDurations,
+      anchor: _playbackAnchor,
+      isMetered: MeteredNetworkService.isMetered,
+    );
+    for (final entry in _windowWaiters.entries.toList()) {
+      final index = entry.key;
+      final inWindow = index >= start && index < end;
+      if (inWindow || index < start || cancelOutside) {
+        _windowWaiters.remove(index);
+        for (final waiter in entry.value) {
+          if (!waiter.isCompleted) waiter.complete(inWindow);
+        }
+      }
+    }
+  }
+
+  void _schedulePrefetch(
+    int anchor, {
+    bool seek = false,
+    bool cancelPendingRequests = false,
+  }) {
     _prefetchQueue.clear();
+    final generation = ++_prefetchGeneration;
+    final start = anchor.clamp(0, segments.length - 1).toInt();
+    final end = HlsPrefetchPolicy.endIndexFor(
+      segmentDurations,
+      anchor: start,
+      isMetered: MeteredNetworkService.isMetered,
+    );
+    _notifyWindowWaiters(cancelOutside: cancelPendingRequests);
     if (seek) {
-      // seek 后旧窗口的进行中下载已无用，放弃以立刻释放并行额度；
-      // 否则它们会占满并发数，拖慢 seek 目标分片的获取。
+      // seek/network handover 后窗口外的进行中下载已无用，放弃以立刻
+      // 释放并行额度；否则它们会占满并发数，拖慢当前窗口的首个分片。
       for (final fetch in _fetches.values.toList()) {
-        if (fetch.index < anchor || fetch.index >= anchor + _prefetchWindow) {
+        if (fetch.index < start || fetch.index >= end) {
           fetch.abandon();
         }
       }
     }
-    final last = anchor + _prefetchWindow;
-    for (var j = anchor; j < last && j < segments.length; j++) {
+    // Keep at most one already-played segment for a small backward seek
+    // cushion. Without trimming, a long episode would still accumulate every
+    // downloaded segment on disk even though the forward window is bounded.
+    unawaited(_trimCachedSegments(max(0, start - 1), end, generation));
+
+    for (var j = start; j < end && j < segments.length; j++) {
       if (_fetches.containsKey(j)) continue;
       if (File(path.join(cacheDir.path, _segmentFileName(j))).existsSync()) {
         continue;
@@ -692,6 +826,34 @@ class _HlsProxySession {
       _prefetchQueue.add(j);
     }
     _drainPrefetchQueue();
+  }
+
+  Future<void> _trimCachedSegments(
+    int start,
+    int end,
+    int generation,
+  ) async {
+    try {
+      await for (final entity in cacheDir.list()) {
+        if (_closed || generation != _prefetchGeneration) return;
+        if (entity is! File) continue;
+        final match =
+            _segmentNamePattern.firstMatch(path.basename(entity.path));
+        if (match == null) continue;
+        final index = int.tryParse(match.group(1)!);
+        if (index == null || (index >= start && index < end)) continue;
+        // An in-flight fetch may still be serving the player. It will be
+        // cleaned by the next window update after it leaves _fetches.
+        if (_fetches.containsKey(index)) continue;
+        try {
+          await entity.delete();
+        } catch (_) {
+          // Windows can reject deletion while mpv still has the file open.
+        }
+      }
+    } catch (e) {
+      KazumiLogger().w('HlsProxy: failed to trim segment cache', error: e);
+    }
   }
 
   void _drainPrefetchQueue() {
@@ -757,9 +919,8 @@ class _HlsProxySession {
           // 直接失败，由播放器重新请求触发全新下载。先同步完成判定
           // 与状态重置，再做带 await 的临时文件清理，避免清理间隙
           // 到达的新订阅者回放到即将被丢弃的旧字节。
-          final retry = !cancelled &&
-              attempt < _maxFetchAttempts &&
-              fetch.canRestart;
+          final retry =
+              !cancelled && attempt < _maxFetchAttempts && fetch.canRestart;
           if (retry) {
             fetch.resetForRetry();
           } else {
@@ -833,8 +994,7 @@ class _HlsProxySession {
         }
       }
     }
-    response.statusCode =
-        partial ? HttpStatus.partialContent : HttpStatus.ok;
+    response.statusCode = partial ? HttpStatus.partialContent : HttpStatus.ok;
     response.contentLength = end - start + 1;
     response.headers.set(HttpHeaders.contentTypeHeader, contentType);
     response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');

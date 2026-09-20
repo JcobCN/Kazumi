@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'package:kazumi/services/video_source/video_source_format.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/webview/video/video_webview_controller.dart';
 import 'package:flutter_inappwebview_platform_interface/flutter_inappwebview_platform_interface.dart';
@@ -178,7 +179,12 @@ class VideoWebviewAppleImpl
                     'Loading video source ${decodeVideoSource(encodedUrl)}');
                 unloadPage();
                 final videoUrl = decodeVideoSource(encodedUrl);
-                notifyVideoSourceResolved(videoUrl);
+                notifyVideoSourceResolved(
+                  videoUrl,
+                  format: isM3U8Url(videoUrl.toLowerCase())
+                      ? VideoSourceFormat.hls
+                      : VideoSourceFormat.auto,
+                );
               }
             }
           });
@@ -195,7 +201,12 @@ class VideoWebviewAppleImpl
               isVideoSourceLoaded = true;
               videoLoadingEventController.add(false);
               unloadPage();
-              notifyVideoSourceResolved(message);
+              notifyVideoSourceResolved(
+                message,
+                format: isM3U8Url(message.toLowerCase())
+                    ? VideoSourceFormat.hls
+                    : VideoSourceFormat.auto,
+              );
             }
           });
     }

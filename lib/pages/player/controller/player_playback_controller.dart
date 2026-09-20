@@ -126,6 +126,19 @@ abstract class _PlayerPlaybackController with Store {
     return identical(mediaPlayer, player);
   }
 
+  void updateHlsPlaybackPosition(
+    Duration position, {
+    bool force = false,
+  }) {
+    // mpv can briefly report position zero while applying Media.start. Keep
+    // the initial offset window until a real position is available; explicit
+    // seeks/restarts pass force=true and are always honored.
+    if (!force && startOffset > 0 && position == Duration.zero) {
+      return;
+    }
+    HlsProxy.instance.updatePlaybackPosition(position, force: force);
+  }
+
   Future<Player?> _discardIfNotCurrent(_OwnedPlayer candidate) async {
     if (identical(_ownedPlayer, candidate)) {
       return candidate.player;
@@ -173,6 +186,7 @@ abstract class _PlayerPlaybackController with Store {
       if (!isCurrentPlayer(player)) {
         return;
       }
+      updateHlsPlaybackPosition(Duration.zero, force: true);
       await player.play();
       startOffset = 0;
     } catch (e) {
@@ -279,6 +293,7 @@ abstract class _PlayerPlaybackController with Store {
     VideoSourceFormat videoSourceFormat = VideoSourceFormat.auto,
   }) async {
     startOffset = offset;
+    cachePolicy.resetPlaybackType();
     superResolutionMode = SuperResolutionMode.fromStorageValue(
       GStorage.getSetting(SettingsKeys.defaultSuperResolutionMode),
     );
@@ -464,10 +479,23 @@ abstract class _PlayerPlaybackController with Store {
       // HLS 源经由本地代理并行获取分片，绕过 CDN 单连接限速；非 HLS
       // 源或代理初始化失败时回退为原始 URL，外部播放器/投屏等场景仍
       // 使用原始地址。
+      final hlsPlayback = videoSourceFormat == VideoSourceFormat.hls;
       final hlsProxyResult = await HlsProxy.instance.resolvePlaybackUrl(
         videoUrl(),
         httpHeaders,
         adBlockerEnabled: adBlockerEnabled,
+        forceHls: hlsPlayback,
+        initialPosition: Duration(seconds: offset),
+      );
+      // The parser-confirmed format is authoritative. Keep the bounded
+      // cache policy only for HLS; direct MP4/other media retains the normal
+      // player policy.
+      if (!isCurrentPlayer(player)) {
+        return await _discardIfNotCurrent(candidate);
+      }
+      updateHlsPlaybackPosition(Duration(seconds: offset), force: true);
+      await cachePolicy.setHlsPlayback(
+        hlsPlayback || hlsProxyResult.status == HlsProxyStatus.proxied,
       );
       if (!isCurrentPlayer(player)) {
         return await _discardIfNotCurrent(candidate);
@@ -614,6 +642,9 @@ abstract class _PlayerPlaybackController with Store {
     if (currentPosition != state.position) {
       currentPosition = state.position;
     }
+    if (state.position > Duration.zero || startOffset <= 0) {
+      updateHlsPlaybackPosition(state.position);
+    }
     if (buffer != state.buffer) {
       buffer = state.buffer;
     }
@@ -638,6 +669,7 @@ abstract class _PlayerPlaybackController with Store {
 
   Future<void> stop() async {
     cachePolicy.stopWatching();
+    cachePolicy.resetPlaybackType();
     // 清理本地 HLS 代理会话；内部自带错误处理，不阻塞播放器释放。
     unawaited(HlsProxy.instance.stop());
     final ownedPlayer = _ownedPlayer;

@@ -44,6 +44,7 @@ class PlayerSeekController {
 
     final normalizedTarget = _normalize(target);
     _playback.currentPosition = normalizedTarget;
+    _playback.updateHlsPlaybackPosition(normalizedTarget, force: true);
     _danmaku.clearAndInvalidateScheduledDanmakus();
 
     final operation = _seekTail.then((_) async {
@@ -86,6 +87,7 @@ class PlayerSeekController {
     }
     session.target = _normalize(target);
     _playback.currentPosition = session.target;
+    _playback.updateHlsPlaybackPosition(session.target, force: true);
     return true;
   }
 

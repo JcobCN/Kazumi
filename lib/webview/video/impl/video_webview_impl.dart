@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:kazumi/services/video_source/video_source_format.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -39,14 +40,19 @@ class VideoWebviewImpl
           final url = request.url.toString();
           final lower = url.toLowerCase();
           if (_isAdUrl(lower)) return null;
-          if (_isM3U8Url(lower) ||
+          if (isM3U8Url(lower) ||
               _isRangeVideoRequest(lower, request.headers)) {
             logEventController.add('Native intercepted video URL: $url');
             isIframeLoaded = true;
             isVideoSourceLoaded = true;
             videoLoadingEventController.add(false);
             unloadPage();
-            notifyVideoSourceResolved(url);
+            notifyVideoSourceResolved(
+              url,
+              format: isM3U8Url(lower)
+                  ? VideoSourceFormat.hls
+                  : VideoSourceFormat.auto,
+            );
           }
           return null;
         },
@@ -130,7 +136,12 @@ class VideoWebviewImpl
                     'Loading video source ${decodeVideoSource(encodedUrl)}');
                 unloadPage();
                 final videoUrl = decodeVideoSource(encodedUrl);
-                notifyVideoSourceResolved(videoUrl);
+                notifyVideoSourceResolved(
+                  videoUrl,
+                  format: isM3U8Url(videoUrl.toLowerCase())
+                      ? VideoSourceFormat.hls
+                      : VideoSourceFormat.auto,
+                );
               }
             }
           });
@@ -147,7 +158,12 @@ class VideoWebviewImpl
               isVideoSourceLoaded = true;
               videoLoadingEventController.add(false);
               unloadPage();
-              notifyVideoSourceResolved(message);
+              notifyVideoSourceResolved(
+                message,
+                format: isM3U8Url(message.toLowerCase())
+                    ? VideoSourceFormat.hls
+                    : VideoSourceFormat.auto,
+              );
             }
           });
     }
@@ -439,12 +455,6 @@ class VideoWebviewImpl
     headlessWebView = null;
     webviewController = null;
     disposeEventControllers();
-  }
-
-  bool _isM3U8Url(String lower) {
-    final uri = Uri.tryParse(lower);
-    if (uri == null) return false;
-    return uri.path.endsWith('.m3u8');
   }
 
   bool _isRangeVideoRequest(String lower, Map<String, String>? headers) {

@@ -79,7 +79,10 @@ class VideoWebviewWindowsImpl
       isVideoSourceLoaded = true;
       videoLoadingEventController.add(false);
       logEventController.add('Loading video source: $url');
-      notifyVideoSourceResolved(url);
+      notifyVideoSourceResolved(
+        url,
+        format: VideoSourceFormat.auto,
+      );
     }));
     await headlessWebview!.loadUrl(url);
   }
