@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:kazumi/request/config/api_endpoints.dart';
 import 'package:kazumi/request/core/dio_factory.dart';
 import 'package:kazumi/request/core/network_error_mapper.dart';
 import 'package:kazumi/utils/constants.dart';
@@ -95,8 +96,11 @@ class BangumiClient {
         token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
-    if (!bypassMirror &&
-        _shouldSignProtectedMirrorRequest(url, method)) {
+    if (_shouldSignProtectedMirrorRequest(
+      url,
+      method,
+      bypassMirror: bypassMirror,
+    )) {
       final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final body = data == null ? '' : jsonEncode(data);
       headers['X-AppId'] = bangumiMirrorCredentials['id'];
@@ -111,13 +115,33 @@ class BangumiClient {
     return headers;
   }
 
-  bool _shouldSignProtectedMirrorRequest(String url, String method) {
-    final enableBangumiProxy =
-        GStorage.getSetting(SettingsKeys.enableBangumiProxy);
-    if (!enableBangumiProxy) {
+  bool _shouldSignProtectedMirrorRequest(
+    String url,
+    String method, {
+    required bool bypassMirror,
+  }) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
       return false;
     }
-    final path = Uri.parse(url).path;
+
+    final isKazumiMirror =
+        uri.host == Uri.parse(ApiEndpoints.bangumiMirrorDomain).host;
+    // Explicit requests to the Kazumi mirror must be signed even when the
+    // mirror switch is off. `bypassMirror` only disables automatic URL
+    // rewriting; it must not disable authentication for an explicit mirror
+    // URL.
+    if (!isKazumiMirror && bypassMirror) {
+      return false;
+    }
+
+    final enableBangumiProxy =
+        GStorage.getSetting(SettingsKeys.enableBangumiProxy);
+    if (!isKazumiMirror && !enableBangumiProxy) {
+      return false;
+    }
+
+    final path = uri.path;
     if (method == 'POST' && path == '/v0/search/subjects') {
       return true;
     }

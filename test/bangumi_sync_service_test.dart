@@ -99,7 +99,10 @@ void main() {
       expect(page, isNotNull);
       expect(page!.items, hasLength(1));
       expect(adapter.requests, hasLength(1));
-      expect(adapter.requests.single.uri.host, 'api.bgmapi.com');
+      expect(adapter.requests.single.uri.host, 'api.kazumi.fyi');
+      expect(adapter.requests.single.headers['X-AppId'], isNotEmpty);
+      expect(adapter.requests.single.headers['X-Timestamp'], isNotNull);
+      expect(adapter.requests.single.headers['X-Signature'], isNotEmpty);
       expect(adapter.requests.single.headers['Authorization'], isNull);
     }
   });
