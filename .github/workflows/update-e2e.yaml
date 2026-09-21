@@ -1,0 +1,216 @@
+---
+name: Windows portable update E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_repository:
+        description: 'Release repository to validate (owner/name)'
+        required: true
+        default: 'JcobCN/Kazumi'
+      update_tag:
+        description: 'Release tag to use as the update package'
+        required: true
+        default: 'v2.3.1-enhance.7'
+      keep_artifacts:
+        description: 'Upload the test bundle and logs as artifacts'
+        required: false
+        type: boolean
+        default: true
+  push:
+    paths:
+      - 'lib/services/update/**'
+      - 'lib/request/config/api_endpoints.dart'
+      - 'lib/utils/version.dart'
+      - '.github/workflows/update-e2e.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portable-update:
+    name: Validate portable update on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      UPDATE_REPOSITORY: ${{ inputs.update_repository || 'JcobCN/Kazumi' }}
+      UPDATE_TAG: ${{ inputs.update_tag || 'v2.3.1-enhance.7' }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run update/version unit tests
+        run: flutter test test/version_test.dart
+
+      - name: Build Windows test bundle
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
+          if (-not (Test-Path (Join-Path $bundle 'kazumi.exe'))) {
+            throw "Windows bundle executable not found: $bundle\kazumi.exe"
+          }
+
+      - name: Resolve release ZIP and digest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh release view $env:UPDATE_TAG --repo $env:UPDATE_REPOSITORY --json tagName,assets,url | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -match '^Kazumi_windows_.*\.zip$' } | Select-Object -First 1
+          if ($null -eq $asset) {
+            throw "No Windows ZIP asset found in $env:UPDATE_REPOSITORY@$env:UPDATE_TAG"
+          }
+          if ([string]::IsNullOrWhiteSpace($asset.digest) -or -not $asset.digest.StartsWith('sha256:')) {
+            throw "Windows ZIP asset has no SHA-256 digest: $($asset.name)"
+          }
+          $sha256 = $asset.digest.Substring(7)
+          "UPDATE_URL=$($asset.browserDownloadUrl)" >> $env:GITHUB_ENV
+          "UPDATE_ASSET_NAME=$($asset.name)" >> $env:GITHUB_ENV
+          "UPDATE_SHA256=$sha256" >> $env:GITHUB_ENV
+          "RELEASE_URL=$($release.url)" >> $env:GITHUB_ENV
+          Write-Host "Using $($asset.name)"
+          Write-Host "Digest $sha256"
+
+      - name: Download and verify release ZIP
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP $env:UPDATE_ASSET_NAME
+          Invoke-WebRequest -Uri $env:UPDATE_URL -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:UPDATE_SHA256.ToLowerInvariant()) {
+            throw "Digest mismatch. Expected $env:UPDATE_SHA256, actual $actual"
+          }
+          "UPDATE_ARCHIVE=$archive" >> $env:GITHUB_ENV
+          Write-Host "Verified $archive"
+
+      - name: Validate archive layout
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
+          $extract = Join-Path $env:RUNNER_TEMP 'kazumi-update-archive-check'
+          Expand-Archive -LiteralPath $env:UPDATE_ARCHIVE -DestinationPath $extract -Force
+          $exe = Get-ChildItem -LiteralPath $extract -Filter 'kazumi.exe' -Recurse -File | Select-Object -First 1
+          if ($null -eq $exe) {
+            throw 'The ZIP does not contain kazumi.exe'
+          }
+          Write-Host "Archive executable: $($exe.FullName)"
+
+      - name: Test detached updater replacement, restart and rollback
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
+          $exe = Join-Path $bundle 'kazumi.exe'
+          $script = Join-Path $env:GITHUB_WORKSPACE 'lib/services/update/windows_portable_updater.dart'
+          $dartSource = Get-Content -LiteralPath $script -Raw
+          $start = $dartSource.IndexOf("const String windowsPortableUpdateScript = r'''")
+          if ($start -lt 0) { throw 'Embedded PowerShell script marker not found' }
+          $start = $dartSource.IndexOf("'''", $start) + 3
+          $end = $dartSource.IndexOf("''';", $start)
+          if ($end -lt 0) { throw 'Embedded PowerShell script terminator not found' }
+          $ps1 = Join-Path $env:RUNNER_TEMP 'kazumi-portable-updater.ps1'
+          $dartSource.Substring($start, $end - $start) | Set-Content -LiteralPath $ps1 -Encoding UTF8
+
+          $oldExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          $marker = Join-Path $env:RUNNER_TEMP 'kazumi-update-marker.txt'
+          "before-update" | Set-Content -LiteralPath $marker
+          $log = Join-Path $env:RUNNER_TEMP 'kazumi-update.log'
+          $workspace = Join-Path $env:RUNNER_TEMP 'kazumi-update-workspace'
+          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+
+          # The helper waits for this PID. Use a short-lived process so the
+          # replacement path is exercised without launching the Flutter app.
+          $process = Start-Process -FilePath $env:ComSpec -ArgumentList '/c','ping 127.0.0.1 -n 3 > nul' -PassThru -WindowStyle Hidden
+          $args = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', $ps1,
+            '-KazumiProcessId', $process.Id,
+            '-ArchivePath', $env:UPDATE_ARCHIVE,
+            '-InstallDirectory', $bundle,
+            '-ExecutablePath', $exe,
+            '-LogPath', $log,
+            '-CleanupDirectoryPath', $workspace
+          )
+          $updater = Start-Process -FilePath powershell.exe -ArgumentList $args -PassThru -WindowStyle Hidden
+          $updater.WaitForExit()
+          if ($updater.ExitCode -ne 0) {
+            throw "Updater process failed with exit code $($updater.ExitCode)"
+          }
+
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'Updated executable is missing' }
+          $newExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          if ($newExeHash -eq $oldExeHash) { throw 'Executable was not replaced' }
+          if (-not (Select-String -LiteralPath $log -Pattern 'Updated application started with PID' -Quiet)) {
+            throw "Updated application did not start according to updater log: $log"
+          }
+          if (-not (Select-String -LiteralPath $log -Pattern 'Update installed and application restarted.' -Quiet)) {
+            throw "Success marker missing from updater log: $log"
+          }
+          $newProcess = Get-Process -Name 'kazumi' -ErrorAction SilentlyContinue
+          if ($null -eq $newProcess) {
+            throw 'Updated kazumi.exe process was not found after restart'
+          }
+          $newProcess | Stop-Process -Force
+          Write-Host "Replacement and restart succeeded: $oldExeHash -> $newExeHash"
+
+          # Exercise the rollback path with a valid Windows executable that
+          # exits immediately. The helper must restore the previous bundle.
+          $badRoot = Join-Path $env:RUNNER_TEMP 'kazumi-bad-update'
+          $badArchive = Join-Path $env:RUNNER_TEMP 'kazumi-bad-update.zip'
+          Remove-Item -LiteralPath $badRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $badRoot -Force | Out-Null
+          Copy-Item -LiteralPath $env:ComSpec -Destination (Join-Path $badRoot 'kazumi.exe')
+          Compress-Archive -Path (Join-Path $badRoot '*') -DestinationPath $badArchive -Force
+          $badLog = Join-Path $env:RUNNER_TEMP 'kazumi-rollback.log'
+          $badWorkspace = Join-Path $env:RUNNER_TEMP 'kazumi-rollback-workspace'
+          New-Item -ItemType Directory -Path $badWorkspace -Force | Out-Null
+          $rollbackWaiter = Start-Process -FilePath $env:ComSpec -ArgumentList '/c','ping 127.0.0.1 -n 3 > nul' -PassThru -WindowStyle Hidden
+          $rollbackArgs = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', $ps1,
+            '-KazumiProcessId', $rollbackWaiter.Id,
+            '-ArchivePath', $badArchive,
+            '-InstallDirectory', $bundle,
+            '-ExecutablePath', $exe,
+            '-LogPath', $badLog,
+            '-CleanupDirectoryPath', $badWorkspace
+          )
+          $rollbackUpdater = Start-Process -FilePath powershell.exe -ArgumentList $rollbackArgs -PassThru -WindowStyle Hidden
+          $rollbackUpdater.WaitForExit()
+          if ($rollbackUpdater.ExitCode -ne 0) {
+            throw "Rollback updater process failed with exit code $($rollbackUpdater.ExitCode)"
+          }
+          if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne $newExeHash) {
+            throw 'Rollback changed the previously installed executable'
+          }
+          if (-not (Select-String -LiteralPath $badLog -Pattern 'Rollback completed.' -Quiet)) {
+            throw "Rollback marker missing from updater log: $badLog"
+          }
+          $rollbackProcess = Get-Process -Name 'kazumi' -ErrorAction SilentlyContinue
+          if ($null -eq $rollbackProcess) {
+            throw 'Previous application was not restarted after rollback'
+          }
+          $rollbackProcess | Stop-Process -Force
+          Write-Host 'Rollback succeeded and previous application was restarted.'
+
+      - name: Upload E2E artifacts
+        if: ${{ always() && (inputs.keep_artifacts == true || github.event_name == 'push') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-update-e2e
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/*.zip
+            ${{ github.workspace }}/build/windows/x64/runner/Release

@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/request/clients/download_http_client.dart';
 import 'package:kazumi/request/config/api_endpoints.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/storage/storage.dart';
+import 'package:kazumi/services/update/windows_portable_updater.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -114,10 +117,42 @@ class AutoUpdater {
   AutoUpdater._internal();
 
   final DownloadHttpClient _downloadClient = DownloadHttpClient.instance;
+  final WindowsPortableUpdater _windowsPortableUpdater =
+      const WindowsPortableUpdater();
+  bool _isAutoUpdating = false;
+
+  bool _isPortableWindowsInstallation() {
+    // A debug/profile process is commonly Dart/Flutter itself rather than the
+    // bundled Kazumi executable, so never hand it to the release updater.
+    if (!kReleaseMode || !Platform.isWindows) return false;
+
+    final executablePath =
+        Platform.resolvedExecutable.replaceAll('\\', '/').toLowerCase();
+    final segments = executablePath.split('/');
+    // MSIX applications are installed below WindowsApps and cannot be
+    // replaced by a portable bundle updater. Unpacked/ZIP builds can be
+    // replaced in place after the running process exits.
+    return !segments.contains('windowsapps');
+  }
+
+  bool _hasPortableWindowsUpdateAsset(UpdateInfo updateInfo) {
+    final asset = getUpdateAssetForType(
+      updateInfo.assets,
+      InstallationType.windowsPortable,
+    );
+    if (asset == null) return false;
+    return getUpdateDownloadUrlFromAsset(asset).isNotEmpty &&
+        getUpdateFileHashFromAsset(asset).isNotEmpty;
+  }
 
   List<InstallationType> _detectAvailableInstallationTypes() {
     if (Platform.isWindows) {
-      return [InstallationType.windowsMsix, InstallationType.windowsPortable];
+      // A portable bundle can be replaced in place by the detached updater.
+      // Keep MSIX first for packaged installations because Windows owns their
+      // files and they must be updated through the package installer.
+      return _isPortableWindowsInstallation()
+          ? [InstallationType.windowsPortable, InstallationType.windowsMsix]
+          : [InstallationType.windowsMsix, InstallationType.windowsPortable];
     }
     if (Platform.isLinux) {
       return [InstallationType.linuxDeb, InstallationType.linuxTar];
@@ -162,7 +197,9 @@ class AutoUpdater {
   }
 
   Future<Map<String, dynamic>> _latestRelease() async {
-    final raw = await _downloadClient.getPlain(ApiEndpoints.latestAppMirror);
+    // The update endpoint is intentionally the configured fork repository;
+    // keep all release metadata and assets on the same source.
+    final raw = await _downloadClient.getPlain(ApiEndpoints.latestApp);
     final data = json.decode(raw);
     if (data is! Map) {
       throw Exception('Invalid update response');
@@ -176,7 +213,17 @@ class AutoUpdater {
 
     try {
       final updateInfo = await checkForUpdates();
-      if (updateInfo != null) {
+      if (updateInfo == null) return;
+
+      // Portable Windows builds cannot update their own executable while it is
+      // running. Download the ZIP silently, hand it to a detached updater,
+      // then let that updater replace the complete bundle after this process
+      // exits. Packaged/MSIX installations still use the normal installer UI.
+      if (Platform.isWindows &&
+          _isPortableWindowsInstallation() &&
+          _hasPortableWindowsUpdateAsset(updateInfo)) {
+        await _autoInstallWindowsPortableUpdate(updateInfo);
+      } else {
         _showUpdateDialog(updateInfo, isAutoCheck: true);
       }
     } catch (e) {
@@ -194,6 +241,54 @@ class AutoUpdater {
       }
     } catch (e) {
       KazumiDialog.showToast(message: '检查更新失败');
+    }
+  }
+
+  Future<void> _autoInstallWindowsPortableUpdate(UpdateInfo updateInfo) async {
+    if (_isAutoUpdating) return;
+    _isAutoUpdating = true;
+
+    try {
+      final asset = getUpdateAssetForType(
+          updateInfo.assets, InstallationType.windowsPortable);
+      final downloadUrl = getUpdateDownloadUrlFromAsset(asset);
+      if (asset == null || downloadUrl.isEmpty) {
+        throw StateError('没有找到 Windows 便携版 ZIP 更新包');
+      }
+
+      final expectedHash = getUpdateFileHashFromAsset(asset);
+      if (expectedHash.isEmpty) {
+        throw StateError('更新包缺少 SHA-256 校验值');
+      }
+      final archivePath = await _downloadFile(
+        downloadUrl,
+        updateInfo.version,
+        expectedHash,
+        CancelToken(),
+      );
+      final executablePath = Platform.resolvedExecutable;
+
+      await _windowsPortableUpdater.schedule(
+        archivePath: archivePath,
+        executablePath: executablePath,
+      );
+
+      KazumiLogger().i(
+        'Update: portable Windows update is ready; handing off to detached updater',
+      );
+      KazumiDialog.showToast(message: '新版本已下载，正在自动安装并重启应用');
+
+      // Give the toast a frame to render and the detached process time to
+      // receive its arguments before this process exits.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      exit(0);
+    } catch (e, stackTrace) {
+      _isAutoUpdating = false;
+      KazumiLogger().w(
+        'Update: automatic portable Windows installation failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -395,7 +490,7 @@ class AutoUpdater {
         assets: updateInfo.assets,
       );
 
-      _downloadUpdate(downloadInfo, expectedHash);
+      unawaited(_downloadUpdate(downloadInfo, expectedHash));
     } catch (e) {
       KazumiDialog.showToast(message: '下载失败: ${e.toString()}');
       KazumiLogger().e('Update: download update failed', error: e);
@@ -658,7 +753,16 @@ class AutoUpdater {
           } else {
             throw 'Could not launch $fileUri';
           }
+        } else if (installationType == InstallationType.windowsPortable &&
+            _isPortableWindowsInstallation()) {
+          await _windowsPortableUpdater.schedule(
+            archivePath: filePath,
+            executablePath: Platform.resolvedExecutable,
+          );
         } else {
+          // A portable ZIP selected from an MSIX installation is just a
+          // different distribution package; do not try to replace the
+          // protected WindowsApps directory.
           await Process.start('explorer.exe', [filePath], runInShell: true);
         }
         await Future.delayed(const Duration(seconds: 1));

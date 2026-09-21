@@ -24,16 +24,18 @@ class ApiEndpoints {
   static const String pluginShopMirror =
       'https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/';
 
+  /// 自动更新仓库（当前发行版来自维护者的 Fork）
+  static const String updateRepository = 'JcobCN/Kazumi';
+
   /// 在线升级
   static const String latestApp =
-      'https://api.github.com/repos/Predidit/Kazumi/releases/latest';
+      'https://api.github.com/repos/$updateRepository/releases/latest';
 
   /// Bangumi 镜像测试后端
   static const String bangumiMirrorDomain = 'https://api.kazumi.fyi';
 
-  /// Kazumi 镜像后端应用更新
-  static const String latestAppMirror =
-      '$bangumiMirrorDomain/kazumi/v1/app/latest';
+  /// 兼容旧调用方的更新地址别名；更新数据统一来自 [updateRepository]。
+  static const String latestAppMirror = latestApp;
 
   /// 弹弹官网
   static const String dandanIndex = 'https://www.dandanplay.com/';
