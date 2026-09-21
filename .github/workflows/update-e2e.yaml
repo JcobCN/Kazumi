@@ -80,7 +80,13 @@ jobs:
             throw "Windows ZIP asset has no SHA-256 digest: $($asset.name)"
           }
           $sha256 = $asset.digest.Substring(7)
-          "UPDATE_URL=$($asset.browserDownloadUrl)" >> $env:GITHUB_ENV
+          # gh release view exposes the browser download URL as `url` on
+          # each asset. `browserDownloadUrl` is not a valid gh JSON field and
+          # would leave UPDATE_URL empty on the runner.
+          if ([string]::IsNullOrWhiteSpace($asset.url)) {
+            throw "Windows ZIP asset has no browser download URL: $($asset.name)"
+          }
+          "UPDATE_URL=$($asset.url)" >> $env:GITHUB_ENV
           "UPDATE_ASSET_NAME=$($asset.name)" >> $env:GITHUB_ENV
           "UPDATE_SHA256=$sha256" >> $env:GITHUB_ENV
           "RELEASE_URL=$($release.url)" >> $env:GITHUB_ENV
