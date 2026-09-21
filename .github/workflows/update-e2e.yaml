@@ -180,7 +180,10 @@ jobs:
           $badArchive = Join-Path $env:RUNNER_TEMP 'kazumi-bad-update.zip'
           Remove-Item -LiteralPath $badRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $badRoot -Force | Out-Null
-          Copy-Item -LiteralPath $env:ComSpec -Destination (Join-Path $badRoot 'kazumi.exe')
+          # where.exe exits immediately when invoked without a query. Renaming
+          # it to kazumi.exe creates a valid executable that reliably forces
+          # the updater's rollback path.
+          Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32/where.exe') -Destination (Join-Path $badRoot 'kazumi.exe')
           Compress-Archive -Path (Join-Path $badRoot '*') -DestinationPath $badArchive -Force
           $badLog = Join-Path $env:RUNNER_TEMP 'kazumi-rollback.log'
           $badWorkspace = Join-Path $env:RUNNER_TEMP 'kazumi-rollback-workspace'
