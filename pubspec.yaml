@@ -155,12 +155,10 @@ dev_dependencies:
   msix: ^3.16.12
 
 flutter_launcher_icons:
-  image_path: assets/images/logo/logo_rounded.png
-  image_path_android: assets/images/logo/logo_android.png
   android: true
   ios: true
   remove_alpha_ios: true
-  image_path: assets/images/logo/logo_android.png
+  image_path: assets/images/logo/logo_rounded.png
   image_path_android: assets/images/logo/logo_android.png
   image_path_ios: assets/images/logo/logo_ios.png
   adaptive_icon_background: "#ffffff"
