@@ -62,8 +62,8 @@ jobs:
         run: |
           flutter build windows --release
           $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
-          if (-not (Test-Path (Join-Path $bundle 'kazumi.exe'))) {
-            throw "Windows bundle executable not found: $bundle\kazumi.exe"
+          if (-not (Test-Path (Join-Path $bundle 'akari.exe'))) {
+            throw "Windows bundle executable not found: $bundle\akari.exe"
           }
 
       - name: Resolve release ZIP and digest
@@ -72,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $release = gh release view $env:UPDATE_TAG --repo $env:UPDATE_REPOSITORY --json tagName,assets,url | ConvertFrom-Json
-          $asset = $release.assets | Where-Object { $_.name -match '^Kazumi_windows_.*\.zip$' } | Select-Object -First 1
+          $asset = $release.assets | Where-Object { $_.name -match '^Akari_windows_.*\.zip$' } | Select-Object -First 1
           if ($null -eq $asset) {
             throw "No Windows ZIP asset found in $env:UPDATE_REPOSITORY@$env:UPDATE_TAG"
           }
@@ -109,11 +109,11 @@ jobs:
         shell: pwsh
         run: |
           $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
-          $extract = Join-Path $env:RUNNER_TEMP 'kazumi-update-archive-check'
+          $extract = Join-Path $env:RUNNER_TEMP 'akari-update-archive-check'
           Expand-Archive -LiteralPath $env:UPDATE_ARCHIVE -DestinationPath $extract -Force
-          $exe = Get-ChildItem -LiteralPath $extract -Filter 'kazumi.exe' -Recurse -File | Select-Object -First 1
+          $exe = Get-ChildItem -LiteralPath $extract -Filter 'akari.exe' -Recurse -File | Select-Object -First 1
           if ($null -eq $exe) {
-            throw 'The ZIP does not contain kazumi.exe'
+            throw 'The ZIP does not contain akari.exe'
           }
           Write-Host "Archive executable: $($exe.FullName)"
 
@@ -121,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           $bundle = Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
-          $exe = Join-Path $bundle 'kazumi.exe'
+          $exe = Join-Path $bundle 'akari.exe'
           $script = Join-Path $env:GITHUB_WORKSPACE 'lib/services/update/windows_portable_updater.dart'
           $dartSource = Get-Content -LiteralPath $script -Raw
           $start = $dartSource.IndexOf("const String windowsPortableUpdateScript = r'''")
@@ -129,14 +129,14 @@ jobs:
           $start = $dartSource.IndexOf("'''", $start) + 3
           $end = $dartSource.IndexOf("''';", $start)
           if ($end -lt 0) { throw 'Embedded PowerShell script terminator not found' }
-          $ps1 = Join-Path $env:RUNNER_TEMP 'kazumi-portable-updater.ps1'
+          $ps1 = Join-Path $env:RUNNER_TEMP 'akari-portable-updater.ps1'
           $dartSource.Substring($start, $end - $start) | Set-Content -LiteralPath $ps1 -Encoding UTF8
 
           $oldExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
-          $marker = Join-Path $env:RUNNER_TEMP 'kazumi-update-marker.txt'
+          $marker = Join-Path $env:RUNNER_TEMP 'akari-update-marker.txt'
           "before-update" | Set-Content -LiteralPath $marker
-          $log = Join-Path $env:RUNNER_TEMP 'kazumi-update.log'
-          $workspace = Join-Path $env:RUNNER_TEMP 'kazumi-update-workspace'
+          $log = Join-Path $env:RUNNER_TEMP 'akari-update.log'
+          $workspace = Join-Path $env:RUNNER_TEMP 'akari-update-workspace'
           New-Item -ItemType Directory -Path $workspace -Force | Out-Null
 
           # The helper waits for this PID. Use a short-lived process so the
@@ -145,7 +145,7 @@ jobs:
           $args = @(
             '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
             '-File', $ps1,
-            '-KazumiProcessId', $process.Id,
+            '-AkariProcessId', $process.Id,
             '-ArchivePath', $env:UPDATE_ARCHIVE,
             '-InstallDirectory', $bundle,
             '-ExecutablePath', $exe,
@@ -167,32 +167,32 @@ jobs:
           if (-not (Select-String -LiteralPath $log -Pattern 'Update installed and application restarted.' -Quiet)) {
             throw "Success marker missing from updater log: $log"
           }
-          $newProcess = Get-Process -Name 'kazumi' -ErrorAction SilentlyContinue
+          $newProcess = Get-Process -Name 'akari' -ErrorAction SilentlyContinue
           if ($null -eq $newProcess) {
-            throw 'Updated kazumi.exe process was not found after restart'
+            throw 'Updated akari.exe process was not found after restart'
           }
           $newProcess | Stop-Process -Force
           Write-Host "Replacement and restart succeeded: $oldExeHash -> $newExeHash"
 
           # Exercise the rollback path with a valid Windows executable that
           # exits immediately. The helper must restore the previous bundle.
-          $badRoot = Join-Path $env:RUNNER_TEMP 'kazumi-bad-update'
-          $badArchive = Join-Path $env:RUNNER_TEMP 'kazumi-bad-update.zip'
+          $badRoot = Join-Path $env:RUNNER_TEMP 'akari-bad-update'
+          $badArchive = Join-Path $env:RUNNER_TEMP 'akari-bad-update.zip'
           Remove-Item -LiteralPath $badRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $badRoot -Force | Out-Null
           # where.exe exits immediately when invoked without a query. Renaming
-          # it to kazumi.exe creates a valid executable that reliably forces
+          # it to akari.exe creates a valid executable that reliably forces
           # the updater's rollback path.
-          Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32/where.exe') -Destination (Join-Path $badRoot 'kazumi.exe')
+          Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32/where.exe') -Destination (Join-Path $badRoot 'akari.exe')
           Compress-Archive -Path (Join-Path $badRoot '*') -DestinationPath $badArchive -Force
-          $badLog = Join-Path $env:RUNNER_TEMP 'kazumi-rollback.log'
-          $badWorkspace = Join-Path $env:RUNNER_TEMP 'kazumi-rollback-workspace'
+          $badLog = Join-Path $env:RUNNER_TEMP 'akari-rollback.log'
+          $badWorkspace = Join-Path $env:RUNNER_TEMP 'akari-rollback-workspace'
           New-Item -ItemType Directory -Path $badWorkspace -Force | Out-Null
           $rollbackWaiter = Start-Process -FilePath $env:ComSpec -ArgumentList '/c','ping 127.0.0.1 -n 3 > nul' -PassThru -WindowStyle Hidden
           $rollbackArgs = @(
             '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
             '-File', $ps1,
-            '-KazumiProcessId', $rollbackWaiter.Id,
+            '-AkariProcessId', $rollbackWaiter.Id,
             '-ArchivePath', $badArchive,
             '-InstallDirectory', $bundle,
             '-ExecutablePath', $exe,
@@ -210,7 +210,7 @@ jobs:
           if (-not (Select-String -LiteralPath $badLog -Pattern 'Rollback completed.' -Quiet)) {
             throw "Rollback marker missing from updater log: $badLog"
           }
-          $rollbackProcess = Get-Process -Name 'kazumi' -ErrorAction SilentlyContinue
+          $rollbackProcess = Get-Process -Name 'akari' -ErrorAction SilentlyContinue
           if ($null -eq $rollbackProcess) {
             throw 'Previous application was not restarted after rollback'
           }

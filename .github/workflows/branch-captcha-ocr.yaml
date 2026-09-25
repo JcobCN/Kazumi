@@ -1,4 +1,4 @@
-name: "Branch build (feat/captcha-ocr)"
+name: "Branch build (feat/captcha-ocr / Akari)"
 
 on:
   push:
@@ -125,13 +125,13 @@ jobs:
           --dart-define=KAZUMI_KEY=$KAZUMI_KEY
         shell: bash
       - name: Package android build output
-        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Kazumi_android_captcha_ocr.apk
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Akari_android_captcha_ocr.apk
         shell: bash
       - name: Upload android outputs
         uses: actions/upload-artifact@v4
         with:
           name: android_outputs
-          path: Kazumi_android_*.apk
+          path: Akari_android_*.apk
 
   flutter-build-linux-amd64:
     needs: [flutter-test, flutter-analyze]
@@ -178,13 +178,13 @@ jobs:
           --dart-define=KAZUMI_KEY=$KAZUMI_KEY
         shell: bash
       - name: Package linux amd64 build output
-        run: tar -zcvf Kazumi_linux_captcha_ocr_amd64.tar.gz -C build/linux/x64/release/bundle .
+        run: tar -zcvf Akari_linux_captcha_ocr_amd64.tar.gz -C build/linux/x64/release/bundle .
         shell: bash
       - name: Upload linux amd64 outputs
         uses: actions/upload-artifact@v4
         with:
           name: linux_amd64_outputs
-          path: Kazumi_linux_*.tar.gz
+          path: Akari_linux_*.tar.gz
 
   flutter-build-windows:
     needs: [flutter-test, flutter-analyze]
@@ -217,12 +217,12 @@ jobs:
           --dart-define=KAZUMI_APPID=$env:KAZUMI_APPID
           --dart-define=KAZUMI_KEY=$env:KAZUMI_KEY
       - name: Package windows build output
-        run: Compress-Archive build/windows/x64/runner/Release/* Kazumi_windows_captcha_ocr.zip
+        run: Compress-Archive build/windows/x64/runner/Release/* Akari_windows_captcha_ocr.zip
       - name: Upload windows outputs
         uses: actions/upload-artifact@v4
         with:
           name: windows_outputs
-          path: Kazumi_windows_*.zip
+          path: Akari_windows_*.zip
 
   flutter-build-ios:
     needs: [flutter-test, flutter-analyze]
@@ -252,12 +252,12 @@ jobs:
         run: |
           mkdir Payload
           cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
-          zip -q -r Kazumi_ios_captcha_ocr_no_sign.ipa Payload
+          zip -q -r Akari_ios_captcha_ocr_no_sign.ipa Payload
       - name: Upload iOS build
         uses: actions/upload-artifact@v4
         with:
           name: ios_outputs
-          path: Kazumi_ios_*.ipa
+          path: Akari_ios_*.ipa
 
   flutter-build-macos:
     needs: [flutter-test, flutter-analyze]
@@ -285,10 +285,10 @@ jobs:
           --dart-define=KAZUMI_KEY=$KAZUMI_KEY
       - name: Package macOS build output
         run: |
-          ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Kazumi.app Kazumi_macos_captcha_ocr.zip
+          ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Akari.app Akari_macos_captcha_ocr.zip
         shell: bash
       - name: Upload macOS outputs
         uses: actions/upload-artifact@v4
         with:
           name: macos_outputs
-          path: Kazumi_macos_*.zip
+          path: Akari_macos_*.zip

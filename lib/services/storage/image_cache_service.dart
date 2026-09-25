@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/painting.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:kazumi/services/network/proxy_aware_image_cache_manager.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -9,7 +9,7 @@ class ImageCacheService {
   Stream<File> _files() async* {
     final temporary = await getTemporaryDirectory();
     final directory =
-        Directory(p.join(temporary.path, DefaultCacheManager.key));
+        Directory(p.join(temporary.path, ProxyAwareImageCacheManager.cacheKey));
     if (!await directory.exists()) return;
     yield* directory
         .list(recursive: true, followLinks: false)
@@ -30,7 +30,7 @@ class ImageCacheService {
   Future<void> clear() async {
     // Include orphaned files, but leave images cached after this snapshot.
     final files = await _files().toList();
-    await DefaultCacheManager().emptyCache();
+    await ProxyAwareImageCacheManager.instance.emptyCache();
     for (final file in files) {
       try {
         await file.delete();

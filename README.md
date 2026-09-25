@@ -1,6 +1,6 @@
 <div align=center>
 
-<h1>Kazumi</h1>
+<h1>Akari</h1>
 
 <img src="assets/images/logo/logo_rounded.png" width=200></img>
 
@@ -12,10 +12,12 @@
 <a href="https://trendshift.io/repositories/11432"><img src="https://trendshift.io/api/badge/trendshift/repositories/11432/yearly?language=Dart"></img></a>
 <a href="https://hellogithub.com/repository/Predidit/Kazumi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=68d824ea55ee4b07aba6fe1dd61ac939&claim_uid=J9Qu6aDd8LT1nU0"/></img></a>
 
-<p>使用 Flutter 开发的基于自定义规则的番剧采集与在线观看程序。使用最多五行基于 <code>Xpath</code> 语法的选择器构建自己的规则。支持规则导入与规则分享。支持基于 <code>Anime4K</code> 的实时超分辨率。绝赞开发中 (～￣▽￣)～</p>
+<p>Akari 是 Kazumi 的社区分支，使用 Flutter 开发，是一款基于自定义规则的番剧采集与在线观看程序。使用最多五行基于 <code>Xpath</code> 语法的选择器构建自己的规则。支持规则导入与规则分享。支持基于 <code>Anime4K</code> 的实时超分辨率。绝赞开发中 (～￣▽￣)～</p>
 </div>
 
 ## 支持平台
+
+Akari 是 Kazumi 的社区分支。应用使用独立的安装标识和数据目录，可以与 Kazumi 并行安装；项目包名和代码内部标识保留，以便同步上游更改。
 
 - Android 10 及以上
 - Windows 10 及以上
@@ -69,9 +71,13 @@
 
 ## 下载
 
-通过本页面 [Releases](https://github.com/Predidit/Kazumi/releases/latest) 选项卡下载：
+通过本仓库 [Releases](https://github.com/JcobCN/Kazumi/releases/latest) 选项卡下载 Akari：
 
-<a href="https://github.com/Predidit/Kazumi/releases">
+Android、iOS、macOS、Windows 和 Linux 均使用与上游不同的应用标识或可执行文件名，应用支持文件与缓存目录也彼此隔离，因此可与 Kazumi 并行安装。Linux 的便携版和 Debian 包使用独立的 `akari` 可执行程序。
+
+注：上游尚未合并此分支，因此上游发布工作流不会自动验证这些更改。
+
+<a href="https://github.com/JcobCN/Kazumi/releases">
   <img src="static/svg/get_it_on_github.svg" alt="Get it on Github" width="200"/>
 </a>
 

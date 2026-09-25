@@ -1,6 +1,6 @@
 
 /* Class = "NSMenuItem"; title = "APP_NAME"; ObjectID = "1Xt-HY-uBw"; */
-"1Xt-HY-uBw.title" = "APP_NAME";
+"1Xt-HY-uBw.title" = "Akari";
 
 /* Class = "NSMenuItem"; title = "Transformations"; ObjectID = "2oI-Rn-ZJC"; */
 "2oI-Rn-ZJC.title" = "Transformations";
@@ -12,13 +12,13 @@
 "4J7-dP-txa.title" = "Enter Full Screen";
 
 /* Class = "NSMenuItem"; title = "Quit APP_NAME"; ObjectID = "4sb-4s-VLi"; */
-"4sb-4s-VLi.title" = "Quit APP_NAME";
+"4sb-4s-VLi.title" = "Quit Akari";
 
 /* Class = "NSMenuItem"; title = "Edit"; ObjectID = "5QF-Oa-p0T"; */
 "5QF-Oa-p0T.title" = "Edit";
 
 /* Class = "NSMenuItem"; title = "About APP_NAME"; ObjectID = "5kV-Vb-QxS"; */
-"5kV-Vb-QxS.title" = "About APP_NAME";
+"5kV-Vb-QxS.title" = "About Akari";
 
 /* Class = "NSMenuItem"; title = "Redo"; ObjectID = "6dh-zS-Vam"; */
 "6dh-zS-Vam.title" = "Redo";
@@ -48,13 +48,13 @@
 "OY7-WF-poV.title" = "Minimize";
 
 /* Class = "NSMenuItem"; title = "Hide APP_NAME"; ObjectID = "Olw-nP-bQN"; */
-"Olw-nP-bQN.title" = "Hide APP_NAME";
+"Olw-nP-bQN.title" = "Hide Akari";
 
 /* Class = "NSMenuItem"; title = "Stop Speaking"; ObjectID = "Oyz-dy-DGm"; */
 "Oyz-dy-DGm.title" = "Stop Speaking";
 
 /* Class = "NSWindow"; title = "APP_NAME"; ObjectID = "QvC-M9-y7g"; */
-"QvC-M9-y7g.title" = "APP_NAME";
+"QvC-M9-y7g.title" = "Akari";
 
 /* Class = "NSMenuItem"; title = "Zoom"; ObjectID = "R4o-n2-Eq4"; */
 "R4o-n2-Eq4.title" = "Zoom";
@@ -102,7 +102,7 @@
 "rJ0-wn-3NY.title" = "Help";
 
 /* Class = "NSMenu"; title = "APP_NAME"; ObjectID = "uQy-DD-JDr"; */
-"uQy-DD-JDr.title" = "APP_NAME";
+"uQy-DD-JDr.title" = "Akari";
 
 /* Class = "NSMenuItem"; title = "Cut"; ObjectID = "uRl-iY-unG"; */
 "uRl-iY-unG.title" = "Cut";

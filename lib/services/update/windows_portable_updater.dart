@@ -10,7 +10,7 @@ const String windowsPortableUpdateScript = r'''
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [int] $KazumiProcessId,
+  [int] $AkariProcessId,
 
   [Parameter(Mandatory = $true)]
   [string] $ArchivePath,
@@ -29,7 +29,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$stagingDirectory = Join-Path $env:TEMP ('Kazumi-update-' + [guid]::NewGuid().ToString('N'))
+$stagingDirectory = Join-Path $env:TEMP ('Akari-update-' + [guid]::NewGuid().ToString('N'))
 $backupDirectory = $null
 $oldDirectoryMoved = $false
 $updateSucceeded = $false
@@ -58,7 +58,7 @@ try {
   # Wait until the Flutter process has really exited and released its file
   # handles. The updater itself runs from %TEMP%, never from the app folder.
   $processDeadline = (Get-Date).AddSeconds(60)
-  while ($null -ne (Get-Process -Id $KazumiProcessId -ErrorAction SilentlyContinue)) {
+  while ($null -ne (Get-Process -Id $AkariProcessId -ErrorAction SilentlyContinue)) {
     if ((Get-Date) -gt $processDeadline) {
       throw 'Timed out waiting for the application to exit.'
     }
@@ -89,7 +89,7 @@ try {
 
   $installParent = Split-Path -Parent $InstallDirectory
   $installName = Split-Path -Leaf $InstallDirectory
-  $backupDirectory = Join-Path $installParent ('.' + $installName + '.kazumi-update-backup-' + [guid]::NewGuid().ToString('N'))
+  $backupDirectory = Join-Path $installParent ('.' + $installName + '.akari-update-backup-' + [guid]::NewGuid().ToString('N'))
 
   # Move the complete old bundle away first. This prevents stale DLLs/assets
   # from surviving an update and gives us a rollback point if copying fails.
@@ -216,7 +216,7 @@ class WindowsPortableUpdater {
           'Application executable does not exist', executablePath);
     }
 
-    final workspace = await Directory.systemTemp.createTemp('kazumi-update-');
+    final workspace = await Directory.systemTemp.createTemp('akari-update-');
     final scriptPath = path.join(workspace.path, 'update.ps1');
     final logPath = path.join(workspace.path, 'update.log');
     await File(scriptPath).writeAsString(
@@ -237,7 +237,7 @@ class WindowsPortableUpdater {
         'Hidden',
         '-File',
         scriptPath,
-        '-KazumiProcessId',
+        '-AkariProcessId',
         pid.toString(),
         '-ArchivePath',
         archive.path,

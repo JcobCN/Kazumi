@@ -36,7 +36,10 @@ int extractEpisodeNumber(String input) {
 }
 
 Future<String> getPlayerTempPath() async {
-  final directory = await getTemporaryDirectory();
+  final directory = Directory(
+    path.join((await getTemporaryDirectory()).path, 'akari'),
+  );
+  await directory.create(recursive: true);
   return directory.path;
 }
 

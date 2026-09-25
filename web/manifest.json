@@ -1,11 +1,11 @@
 {
-    "name": "kazumi",
-    "short_name": "kazumi",
+    "name": "Akari",
+    "short_name": "Akari",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Akari is a community fork of Kazumi for anime browsing and playback.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

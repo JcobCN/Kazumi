@@ -155,6 +155,8 @@ dev_dependencies:
   msix: ^3.16.12
 
 flutter_launcher_icons:
+  image_path: assets/images/logo/logo_rounded.png
+  image_path_android: assets/images/logo/logo_android.png
   android: true
   ios: true
   remove_alpha_ios: true
@@ -182,7 +184,10 @@ flutter_native_splash:
   image_dark_ios: assets/images/logo/logo_ios.png
 
 msix_config:
-  display_name: Kazumi
+  display_name: Akari
+  output_name: akari
+  executable_name: akari.exe
+  identity_name: JcobCN.Akari
   publisher: CN=SignPath Foundation, O=SignPath Foundation, L=Lewes, S=Delaware, C=US
   logo_path: assets/images/logo/logo_rounded.png
   sign_msix: false

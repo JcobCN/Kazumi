@@ -9,13 +9,15 @@ import 'package:kazumi/services/network/system_proxy_service.dart';
 import 'package:kazumi/services/storage/storage.dart';
 
 class ProxyAwareImageCacheManager extends CacheManager with ImageCacheManager {
+  static const cacheKey = 'akari_image_cache';
+
   static final ProxyAwareImageCacheManager instance =
       ProxyAwareImageCacheManager._();
 
   ProxyAwareImageCacheManager._()
       : super(
           Config(
-            DefaultCacheManager.key,
+            cacheKey,
             fileService: _ProxyAwareImageFileService(),
           ),
         );

@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
-ln -sf /opt/Kazumi/kazumi /usr/bin/kazumi
-chmod +x /usr/bin/kazumi
+ln -sf /opt/akari/akari /usr/bin/akari
+chmod +x /usr/bin/akari
 update-mime-database /usr/share/mime || true
 update-desktop-database /usr/share/applications || true
 exit 0

@@ -14,10 +14,10 @@
 "4J7-dP-txa.title" = "进入全屏幕";
 
 /* Class = "NSMenuItem"; title = "Quit APP_NAME"; ObjectID = "4sb-4s-VLi"; */
-"4sb-4s-VLi.title" = "退出APP_NAME";
+"4sb-4s-VLi.title" = "退出 Akari";
 
 /* Class = "NSMenuItem"; title = "About APP_NAME"; ObjectID = "5kV-Vb-QxS"; */
-"5kV-Vb-QxS.title" = "关于APP_NAME";
+"5kV-Vb-QxS.title" = "关于 Akari";
 
 /* Class = "NSMenuItem"; title = "Edit"; ObjectID = "5QF-Oa-p0T"; */
 "5QF-Oa-p0T.title" = "编辑";
@@ -80,7 +80,7 @@
 "o2L-YK-Znd.title" = "音量加";
 
 /* Class = "NSMenuItem"; title = "Hide APP_NAME"; ObjectID = "Olw-nP-bQN"; */
-"Olw-nP-bQN.title" = "隐藏APP_NAME";
+"Olw-nP-bQN.title" = "隐藏 Akari";
 
 /* Class = "NSMenuItem"; title = "Previous"; ObjectID = "Ox4-Od-VDn"; */
 "Ox4-Od-VDn.title" = "上一集";

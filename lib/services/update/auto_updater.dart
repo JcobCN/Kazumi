@@ -686,7 +686,10 @@ class AutoUpdater {
 
     checkCancelled();
     final fileName = _getFileNameFromUrl(url, version);
-    final tempDir = await getTemporaryDirectory();
+    final tempDir = Directory(
+      '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}akari',
+    );
+    await tempDir.create(recursive: true);
     checkCancelled();
     final filePath = '${tempDir.path}/$fileName';
     final file = File(filePath);
