@@ -3,7 +3,9 @@ import 'package:kazumi/utils/version.dart';
 
 void main() {
   group('compareVersions', () {
-    test('accepts v-prefixed tags and fork suffixes', () {
+    test('accepts plain version tags and historical fork suffixes', () {
+      expect(needUpdate('2.3.1', 'v2.3.2'), isTrue);
+      expect(needUpdate('2.3.1', '2.3.1'), isFalse);
       expect(needUpdate('2.3.1', 'v2.3.1-enhance.7'), isTrue);
       expect(needUpdate('2.3.1-enhance.6', 'v2.3.1-enhance.7'), isTrue);
       expect(needUpdate('2.3.1-enhance.7', '2.3.1-enhance.7'), isFalse);

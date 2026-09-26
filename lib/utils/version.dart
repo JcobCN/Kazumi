@@ -2,17 +2,18 @@ import 'dart:math';
 
 /// Returns true when [remoteVersion] should be treated as newer than
 /// [localVersion]. Release tags may optionally contain a leading `v` and a
-/// distribution suffix, for example `v2.3.1-enhance.7`.
+/// distribution suffix, for example `v2.3.1-enhance.7`. New Akari releases use
+/// the plain `vX.Y.Z` form; suffix handling remains for existing releases.
 bool needUpdate(String localVersion, String remoteVersion) {
   return compareVersions(remoteVersion, localVersion) > 0;
 }
 
 /// Compares two application versions using the numeric version core first.
 ///
-/// The project publishes fork/distribution builds with suffixes such as
-/// `-enhance.7`. A suffixed build is considered newer than the same unsuffixed
-/// base version so a `2.3.1` installation can update to
-/// `v2.3.1-enhance.7`. This is intentional and differs from strict SemVer
+/// Older fork/distribution releases use suffixes such as `-enhance.7`. A
+/// suffixed build is considered newer than the same unsuffixed base version so
+/// existing installations can update to those historical releases. New Akari
+/// releases use plain `vX.Y.Z` tags. This differs from strict SemVer
 /// prerelease ordering.
 int compareVersions(String leftVersion, String rightVersion) {
   final left = _parseVersion(leftVersion);

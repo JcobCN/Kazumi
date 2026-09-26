@@ -11,7 +11,7 @@ on:
       update_tag:
         description: 'Release tag to use as the update package'
         required: true
-        default: 'v2.3.1-enhance.7'
+        default: 'v2.3.2'
       keep_artifacts:
         description: 'Upload the test bundle and logs as artifacts'
         required: false
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 30
     env:
       UPDATE_REPOSITORY: ${{ inputs.update_repository || 'JcobCN/Kazumi' }}
-      UPDATE_TAG: ${{ inputs.update_tag || 'v2.3.1-enhance.7' }}
+      UPDATE_TAG: ${{ inputs.update_tag || 'v2.3.2' }}
 
     steps:
       - name: Checkout source
