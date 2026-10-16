@@ -4,9 +4,10 @@ import 'package:dio/dio.dart';
 import 'package:kazumi/request/config/api_endpoints.dart';
 import 'package:kazumi/request/core/dio_factory.dart';
 import 'package:kazumi/request/core/network_error_mapper.dart';
-import 'package:kazumi/utils/constants.dart';
+import 'package:kazumi/services/network/bangumi_acceleration.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/bangumi_mirror_credentials.dart';
+import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/utils/crypto.dart';
 
 class BangumiClient {
@@ -23,7 +24,7 @@ class BangumiClient {
     CancelToken? cancelToken,
   }) async {
     try {
-      final response = await DioFactory.apiDio.get(
+      final response = await DioFactory.bangumiDio.get(
         url,
         queryParameters: queryParameters,
         options: Options(
@@ -53,7 +54,7 @@ class BangumiClient {
     CancelToken? cancelToken,
   }) async {
     try {
-      final response = await DioFactory.apiDio.post(
+      final response = await DioFactory.bangumiDio.post(
         url,
         data: data,
         queryParameters: queryParameters,
@@ -86,8 +87,9 @@ class BangumiClient {
     bool bypassMirror = false,
   }) {
     final headers = <String, dynamic>{...bangumiHTTPHeader};
-    final bangumiSyncEnable =
-        GStorage.getSetting(SettingsKeys.bangumiSyncEnable);
+    final bangumiSyncEnable = GStorage.getSetting(
+      SettingsKeys.bangumiSyncEnable,
+    );
     final token = (accessToken ??
             GStorage.getSetting<String>(SettingsKeys.bangumiAccessToken))
         .trim();
@@ -135,12 +137,13 @@ class BangumiClient {
       return false;
     }
 
-    final enableBangumiProxy =
-        GStorage.getSetting(SettingsKeys.enableBangumiProxy);
-    if (!isKazumiMirror && !enableBangumiProxy) {
+    final isMirrorEnabled =
+        BangumiAcceleration.current == BangumiAcceleration.mirror;
+    if (!isKazumiMirror &&
+        (!isMirrorEnabled ||
+            !ApiEndpoints.bangumiPublicApiHosts.contains(uri.host))) {
       return false;
     }
-
     final path = uri.path;
     if (method == 'POST' && path == '/v0/search/subjects') {
       return true;

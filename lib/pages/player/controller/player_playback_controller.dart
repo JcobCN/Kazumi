@@ -16,7 +16,6 @@ import 'package:kazumi/services/network/system_proxy_service.dart';
 import 'package:kazumi/services/player/hls_proxy/hls_proxy_server.dart';
 import 'package:kazumi/services/player/playback_cache_policy.dart';
 import 'package:kazumi/services/player/player_error_mapper.dart';
-import 'package:kazumi/services/player/player_screenshot_service.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/video_source/video_source_format.dart';
 import 'package:kazumi/utils/async_serial_queue.dart';
@@ -70,8 +69,6 @@ abstract class _PlayerPlaybackController with Store {
   final PlayerDebugController debug;
   final String Function() videoUrl;
   final bool Function() isLocalPlayback;
-  final PlayerScreenshotService screenshotService =
-      const PlayerScreenshotService();
   late final PlaybackCachePolicy cachePolicy = PlaybackCachePolicy(
     isLocalPlayback: isLocalPlayback,
     currentPlayer: () => mediaPlayer,
@@ -685,15 +682,12 @@ abstract class _PlayerPlaybackController with Store {
     ]);
   }
 
-  Future<Uint8List?> screenshot({String format = 'image/jpeg'}) async {
-    return await mediaPlayer!.screenshot(format: format);
-  }
-
   Future<Uint8List?> screenshotPng() async {
     final player = mediaPlayer;
     if (player == null) {
       return null;
     }
-    return await screenshotService.capturePng(player);
+    // Encode the captured frame natively; PlayerState dimensions may be stale.
+    return player.safeScreenshot(format: 'image/png');
   }
 }

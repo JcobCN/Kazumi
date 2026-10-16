@@ -5,7 +5,7 @@ class ApiEndpoints {
   static const String version = appBuildName ?? '0.0.0';
 
   /// 规则API级别
-  static const int apiLevel = 8;
+  static const int apiLevel = 9;
 
   /// 项目主页
   static const String projectUrl = "https://kazumi.app/";
@@ -83,6 +83,8 @@ class ApiEndpoints {
 
   /// Bangumi Next API Domain
   static const String bangumiAPINextDomain = 'https://next.bgm.tv';
+
+  static const bangumiPublicApiHosts = {'api.bgm.tv', 'next.bgm.tv'};
 
   /// 每日放送
   static const String bangumiCalendar = '/p1/calendar';
