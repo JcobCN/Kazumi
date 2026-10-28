@@ -365,7 +365,8 @@ jobs:
           Homepage: https://github.com/JcobCN/Kazumi
           Depends: libayatana-appindicator3-1,
                    gir1.2-ayatanaappindicator3-0.1,
-                   libwebkit2gtk-4.1-0
+                   libwebkit2gtk-4.1-0,
+                   libva-wayland2
           EOF
 
           cp ../assets/linux/io.github.JcobCN.Akari.desktop usr/share/applications
@@ -517,7 +518,8 @@ jobs:
           Homepage: https://github.com/JcobCN/Kazumi
           Depends: libayatana-appindicator3-1,
                    gir1.2-ayatanaappindicator3-0.1,
-                   libwebkit2gtk-4.1-0
+                   libwebkit2gtk-4.1-0,
+                   libva-wayland2
           EOF
 
           cp ../assets/linux/io.github.JcobCN.Akari.desktop usr/share/applications

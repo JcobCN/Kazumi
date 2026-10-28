@@ -2,9 +2,10 @@
 Name=Akari
 Comment=Akari, a community fork of Kazumi for anime browsing and playback.
 Comment[zh_CN]=Akari：Kazumi 的社区分支，支持追番与在线播放
-Exec=akari
+Exec=akari %u
 StartupWMClass=akari
 Icon=akari
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Video;
+MimeType=x-scheme-handler/kazumi;

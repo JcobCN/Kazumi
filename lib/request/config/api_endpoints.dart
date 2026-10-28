@@ -21,7 +21,10 @@ class ApiEndpoints {
       'https://raw.githubusercontent.com/Predidit/KazumiRules/main/';
 
   /// 规则仓库镜像
-  static const String pluginShopMirror =
+  static const String ghProxyHost = 'gh-proxy.org';
+  static const String ghProxyMirror = 'https://$ghProxyHost/';
+  static const String ghfastMirror = 'https://ghfast.top/';
+  static const String gitcodeMirror =
       'https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/';
 
   /// 自动更新仓库（当前发行版来自维护者的 Fork）
