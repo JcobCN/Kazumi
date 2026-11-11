@@ -586,7 +586,7 @@ jobs:
   flutter-build-ios:
     name: "Release for iOS"
     needs: [flutter-test, flutter-analyze]
-    runs-on: "macos-latest"
+    runs-on: "xcode-27"
     permissions: write-all
 
     steps:
