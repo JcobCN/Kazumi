@@ -325,5 +325,17 @@ void main() {
       expect(resolvedItem.id, 2145);
       expect(resolvedItem.nameCn, '赌博默示录 第二季');
     });
+
+    test('播放当前条目（正片/第一季）时绝不误篡改为续集或衍生作品 ID', () {
+      final resolvedItem = AnimeTitleHelper.resolvePlaybackBangumiItem(
+        currentBangumiItem: baseItem,
+        relations: relations,
+        searchTitle: '赌博默示录 第01集',
+      );
+
+      // 必须保留 baseItem 本身的 ID（2145），绝不能被 sequelItem (10972) 抢占导致弹幕加载失败
+      expect(resolvedItem.id, 2145);
+      expect(resolvedItem.nameCn, '赌博默示录');
+    });
   });
 }

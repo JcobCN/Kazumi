@@ -557,7 +557,11 @@ class AnimeTitleHelper {
   /// 从 Bangumi 关联条目列表（前传/续集等）中寻找与当前选中的视频源标题匹配的条目。
   /// 例如：用户在 "赌博默示录" (ID: 2145) 的选源弹窗中点击了 "赌博默示录 破戒录篇"，
   /// 算法将从关联列表中匹配到续集 "逆境無頼カイジ 破戒録篇" (ID: 10972)，从而为播放和下载关联正确的季数元数据与独立 ID。
+  ///
+  /// 注意：如果传入了 [currentBangumiItem]，且当前视频源原本就属于当前条目（如第一季正片），
+  /// 绝不会被关联列表中的续集或衍生作品错误抢占，确保弹幕获取和播放 ID 准确无误。
   static BangumiItem? findMatchingRelation({
+    BangumiItem? currentBangumiItem,
     required String searchTitle,
     required List<BangumiRelation> relations,
   }) {
@@ -571,44 +575,81 @@ class AnimeTitleHelper {
         ? _simplifyForComparison(targetSubtitle)
         : null;
 
+    // 1. 如果提供了当前条目，先进行归属保护检查：
+    // 若视频源标题并未指向不同季度或新副标题，说明就是当前条目本体，绝不匹配任何关联条目
+    if (currentBangumiItem != null) {
+      final currentSeason = extractSeasonNumber(currentBangumiItem.nameCn) ??
+          extractSeasonNumber(currentBangumiItem.name) ??
+          1;
+      final currentSub = extractSubtitle(currentBangumiItem.nameCn) ??
+          extractSubtitle(currentBangumiItem.name);
+      final simplifiedCurrentSub =
+          currentSub != null ? _simplifyForComparison(currentSub) : null;
+
+      final isDifferentSeason =
+          targetSeason != null && targetSeason != currentSeason;
+      final isDifferentSubtitle = simplifiedSubtitle != null &&
+          simplifiedSubtitle.length >= 2 &&
+          (simplifiedCurrentSub == null ||
+              !simplifiedCurrentSub.contains(simplifiedSubtitle));
+
+      if (!isDifferentSeason && !isDifferentSubtitle) {
+        return null;
+      }
+    }
+
+    // 2. 遍历关联列表，严格匹配目标条目
     for (final rel in relations) {
       final item = rel.bangumiItem;
+      if (currentBangumiItem != null && item.id == currentBangumiItem.id) {
+        continue;
+      }
+
       final simplifiedName = _simplifyForComparison(item.name);
       final simplifiedNameCn = _simplifyForComparison(item.nameCn);
 
-      // (A) 完全或包含匹配
+      // (A) 精确完全匹配
       if (simplifiedTitle == simplifiedNameCn ||
-          simplifiedTitle == simplifiedName ||
-          (simplifiedTitle.length >= 4 &&
-              (simplifiedNameCn.contains(simplifiedTitle) ||
-                  simplifiedTitle.contains(simplifiedNameCn)))) {
+          simplifiedTitle == simplifiedName) {
         return item;
       }
 
-      // (B) 别名匹配
-      for (final alias in item.alias) {
-        final simplifiedAlias = _simplifyForComparison(alias);
-        if (simplifiedAlias.isEmpty) continue;
-        if (simplifiedTitle == simplifiedAlias ||
-            simplifiedTitle.contains(simplifiedAlias)) {
-          return item;
-        }
-      }
-
-      // (C) 季数匹配（例如 relation 是 "续集"，且 searchTitle 是 "第二季"）
+      // (B) 季数精准匹配（例如 relation 是 "续集"，且 searchTitle 是 "第二季"）
       if (targetSeason != null) {
         final relSeason = extractSeasonNumber(item.nameCn) ??
             extractSeasonNumber(item.name) ??
             (rel.relation == '续集' ? 2 : null);
         if (relSeason == targetSeason) {
+          final itemMain = extractMainTitle(item.nameCn) ??
+              extractMainTitle(item.name) ??
+              item.nameCn;
+          final currentMain = currentBangumiItem != null
+              ? (extractMainTitle(currentBangumiItem.nameCn) ??
+                  currentBangumiItem.nameCn)
+              : '';
+          if (currentMain.isEmpty ||
+              _simplifyForComparison(itemMain)
+                  .contains(_simplifyForComparison(currentMain)) ||
+              _simplifyForComparison(currentMain)
+                  .contains(_simplifyForComparison(itemMain))) {
+            return item;
+          }
+        }
+      }
+
+      // (C) 副标题精准匹配（例如 "破戒录篇" 明确出现在关联条目名中）
+      if (simplifiedSubtitle != null && simplifiedSubtitle.length >= 2) {
+        if (simplifiedNameCn.contains(simplifiedSubtitle) ||
+            simplifiedName.contains(simplifiedSubtitle)) {
           return item;
         }
       }
 
-      // (D) 副标题匹配（例如 "破戒录篇"）
-      if (simplifiedSubtitle != null && simplifiedSubtitle.length >= 2) {
-        if (simplifiedNameCn.contains(simplifiedSubtitle) ||
-            simplifiedName.contains(simplifiedSubtitle)) {
+      // (D) 别名精准完全匹配
+      for (final alias in item.alias) {
+        final simplifiedAlias = _simplifyForComparison(alias);
+        if (simplifiedAlias.isEmpty) continue;
+        if (simplifiedTitle == simplifiedAlias) {
           return item;
         }
       }
@@ -626,11 +667,12 @@ class AnimeTitleHelper {
     required String searchTitle,
   }) {
     final matchedRelation = findMatchingRelation(
+      currentBangumiItem: currentBangumiItem,
       searchTitle: searchTitle,
       relations: relations,
     );
 
-    if (matchedRelation != null) {
+    if (matchedRelation != null && matchedRelation.id != currentBangumiItem.id) {
       return matchedRelation;
     }
 
